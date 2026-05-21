@@ -1,0 +1,33 @@
+{
+  "name": "claw-coder",
+  "version": "0.1.0",
+  "description": "A local Tree-sitter knowledge graph and hybrid RAG CLI agent.",
+  "type": "commonjs",
+  "bin": {
+    "claw": "./bin/claw-coder.js",
+    "claw-coder": "./bin/claw-coder.js"
+  },
+  "scripts": {
+    "doctor": "node ./bin/claw-coder.js doctor",
+    "help": "node ./bin/claw-coder.js --help"
+  },
+  "keywords": [
+    "rag",
+    "knowledge-graph",
+    "tree-sitter",
+    "ollama",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "agent_rag.py",
+    "agent_knowledge.py",
+    "requirements.txt",
+    "README.md",
+    "LICENSE"
+  ]
+}

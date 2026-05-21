@@ -1,0 +1,207 @@
+{
+  "nodes": [
+    {
+      "id": "file:4a2432ec2374c22871b1",
+      "kind": "file",
+      "name": "tree_sitter_sample.js",
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js",
+        "extension": ".js",
+        "language": "javascript",
+        "size": 119,
+        "sha256": "bb7e3f4261c2402714c51b9cea6a7b16332a7e04174f7cd636a061d05fc87caa",
+        "tokens": [
+          "add",
+          "box",
+          "constructor",
+          "export",
+          "function",
+          "value"
+        ],
+        "parser": "tree-sitter"
+      }
+    },
+    {
+      "id": "directory:a1c4816d83b3b86c66ef",
+      "kind": "directory",
+      "name": "Claw-Coder",
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder"
+      }
+    },
+    {
+      "id": "chunk:2f6b95ae90eb1eba0a12",
+      "kind": "chunk",
+      "name": "tree_sitter_sample.js#chunk_0",
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js",
+        "chunk_index": 0,
+        "start": 0,
+        "end": 119,
+        "preview": "export function add(a, b) { return a + b; } export class Box { constructor(value) { this.value = value; } }",
+        "tokens": [
+          "add",
+          "box",
+          "constructor",
+          "export",
+          "function",
+          "value"
+        ]
+      }
+    },
+    {
+      "id": "symbol:a88e3de1909c2cc28496",
+      "kind": "symbol",
+      "name": "add",
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js",
+        "language": "javascript",
+        "symbol_kind": "function",
+        "node_type": "function_declaration",
+        "start_byte": 7,
+        "end_byte": 45,
+        "line": 1,
+        "end_line": 3,
+        "preview": "function add(a, b) { return a + b; }",
+        "has_error": false
+      }
+    },
+    {
+      "id": "symbol:c4314bef402e05ffa9d4",
+      "kind": "symbol",
+      "name": "Box",
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js",
+        "language": "javascript",
+        "symbol_kind": "class",
+        "node_type": "class_declaration",
+        "start_byte": 54,
+        "end_byte": 118,
+        "line": 5,
+        "end_line": 9,
+        "preview": "class Box { constructor(value) { this.value = value; } }",
+        "has_error": false
+      }
+    },
+    {
+      "id": "symbol:22fd3751cb5133021faa",
+      "kind": "symbol",
+      "name": "constructor",
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js",
+        "language": "javascript",
+        "symbol_kind": "method",
+        "node_type": "method_definition",
+        "start_byte": 68,
+        "end_byte": 116,
+        "line": 6,
+        "end_line": 8,
+        "preview": "constructor(value) { this.value = value; }",
+        "has_error": false
+      }
+    },
+    {
+      "id": "entity:3be53cb73c92bb095578",
+      "kind": "entity",
+      "name": "value",
+      "metadata": {}
+    },
+    {
+      "id": "entity:24c6138a0e4091eab6be",
+      "kind": "entity",
+      "name": "export",
+      "metadata": {}
+    },
+    {
+      "id": "entity:006f7d27935c26783962",
+      "kind": "entity",
+      "name": "function",
+      "metadata": {}
+    },
+    {
+      "id": "entity:bf392fb69f446c0c877f",
+      "kind": "entity",
+      "name": "constructor",
+      "metadata": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "directory:a1c4816d83b3b86c66ef",
+      "target": "file:4a2432ec2374c22871b1",
+      "relation": "contains",
+      "weight": 1.0,
+      "metadata": {}
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "chunk:2f6b95ae90eb1eba0a12",
+      "relation": "contains",
+      "weight": 1.0,
+      "metadata": {}
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "symbol:a88e3de1909c2cc28496",
+      "relation": "defines",
+      "weight": 2.5,
+      "metadata": {
+        "line": 1
+      }
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "symbol:c4314bef402e05ffa9d4",
+      "relation": "defines",
+      "weight": 2.5,
+      "metadata": {
+        "line": 5
+      }
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "symbol:22fd3751cb5133021faa",
+      "relation": "defines",
+      "weight": 2.5,
+      "metadata": {
+        "line": 6
+      }
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "entity:3be53cb73c92bb095578",
+      "relation": "mentions",
+      "weight": 3.0,
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js"
+      }
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "entity:24c6138a0e4091eab6be",
+      "relation": "mentions",
+      "weight": 2.0,
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js"
+      }
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "entity:006f7d27935c26783962",
+      "relation": "mentions",
+      "weight": 1.0,
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js"
+      }
+    },
+    {
+      "source": "file:4a2432ec2374c22871b1",
+      "target": "entity:bf392fb69f446c0c877f",
+      "relation": "mentions",
+      "weight": 1.0,
+      "metadata": {
+        "path": "/Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/tree_sitter_sample.js"
+      }
+    }
+  ]
+}
