@@ -12,4 +12,6 @@ tree-sitter-html
 chromadb
 ddgs
 pypdf
+uvicorn
+fastapi
 dataclasses
