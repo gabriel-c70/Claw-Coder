@@ -12,13 +12,4 @@ tree-sitter-html
 chromadb
 ddgs
 pypdf
-shlex
-importlib
-argparse
-subprocess
-webbrowser
-sys
-pathlib
-urllib.parse
-typing
-dataclass
+dataclasses
