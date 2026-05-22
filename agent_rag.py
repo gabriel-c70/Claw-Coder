@@ -53,6 +53,9 @@ from agent_knowledge import (
     tree_sitter_available_languages as graph_tree_sitter_languages,
 )
 
+load_dotenv()
+
+RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "http://localhost:8001")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -154,6 +157,7 @@ EXTENSION_TO_LANGUAGE = {
     '.h': 'c',
     '.cpp': 'c++'
 }
+
 class ToolError(Exception):
     pass
 WORKSPACE = Path("./workspace").resolve()
@@ -1150,8 +1154,73 @@ class Agent:
             raise ToolError("Path escape detected")
         return target
 
+    def _check_rate_limit(self, tool_name: str) -> Optional[str]:
+        """
+        Call the FastAPI rate-limit server.
+        Returns None if allowed, or an error string if blocked/unreachable.
+        Reads the user's JWT from ~/.claw-coder/session.json (written by claw login).
+        """
+        import json as _json
+        import urllib.request as _req
+        import urllib.error
+
+        session_path = Path.home() / ".claw-coder" / "session.json"
+        if not session_path.exists():
+            return None  # no auth configured — skip limit check
+
+        try:
+            session = _json.loads(session_path.read_text(encoding="utf-8"))
+            token = session.get("access_token", "")
+            if not token:
+                return None
+        except Exception:
+            return None
+
+        payload = _json.dumps({"tool_name": tool_name}).encode("utf-8")
+        request = _req.Request(
+            f"{RATE_LIMIT_API_URL}/check",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
+        try:
+            with _req.urlopen(request, timeout=5) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+                remaining = data.get("remaining", "?")
+                logging.info(
+                    "Rate limit: %s — %s/%s used this month (%s remaining)",
+                    tool_name,
+                    data.get("used"),
+                    data.get("limit"),
+                    remaining,
+                )
+                return None  # allowed
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                try:
+                    detail = _json.loads(exc.read().decode("utf-8")).get("detail", {})
+                    msg = detail.get("message", f"Rate limit exceeded for {tool_name}")
+                except Exception:
+                    msg = f"Rate limit exceeded for {tool_name}"
+                return msg
+            # any other HTTP error (401, 500) — fail open so the tool still runs
+            logging.warning("Rate limit server error %s for %s — skipping", exc.code, tool_name)
+            return None
+        except Exception as exc:
+            # server not running — fail open
+            logging.warning("Rate limit server unreachable (%s) — skipping check", exc)
+            return None
+
     def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
         try:
+            # ── rate limit check ──────────────────────────────────────
+            limit_error = self._check_rate_limit(tool_name)
+            if limit_error:
+                return json.dumps({"status": "error", "error": limit_error}, ensure_ascii=False)
+            # ─
             if tool_name == "gnu_patch":
                 return self._gnu_patch_tool(tool_input)
             if tool_name == "extract_functions":
@@ -2521,7 +2590,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
-load_dotenv()
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()

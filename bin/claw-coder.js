@@ -4,6 +4,7 @@
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { login, loadSession, clearSession } = require("./auth");
 
 const packageRoot = path.resolve(__dirname, "..");
 const pythonAgent = path.join(packageRoot, "agent_rag.py");
@@ -46,6 +47,10 @@ Examples:
   claw <model>                 Start chat with any model
   claw qwen2.5-coder:7b        Start chat with qwen2.5-coder:7b
   claw embedding <model>       Start a model for the embeddings part of the agent
+  login [provider]             Log in via OAuth (default: github)
+  logout                       Clear saved session
+  whoami                       Show current logged-in user
+
 `;
 
 function printHelp() {
@@ -314,6 +319,55 @@ function main() {
   runAgent(["--embedding-model", embeddingModel, "chat"]);
   return;
 }
+  // --- paste this block right after the "doctor" check ---
+
+  if (command === "login") {
+    const provider = commandArgs[0] || "github";
+    login(provider)
+        .then((session) => {
+        console.log(`\nLogged in as ${session.user?.email}`);
+        console.log("Run `claw chat` or any claw command to start.");
+        })
+        .catch((err) => {
+        console.error(`Login failed: ${err.message}`);
+        process.exitCode = 1;
+        });
+    return;
+}
+
+  if (command === "logout") {
+    clearSession();
+    console.log("Logged out. Run `claw login` to log in again.");
+    return;
+}
+
+  if (command === "whoami") {
+    const session = loadSession();
+  if (!session) {
+    console.log("Not logged in. Run: claw login");
+  } else {
+        console.log(`Logged in as: ${session.user?.email}`);
+        const exp = new Date(session.expires_at * 1000).toLocaleString();
+        console.log(`Session expires: ${exp}`);
+    }
+  return;
+    }
+
+// ── AUTH GATE ──────────────────────────────────────────────
+// skip auth for setup/doctor/help (they don't touch the agent)
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v"]);
+  if (!NO_AUTH_COMMANDS.has(command)) {
+    const session = loadSession();
+  if (!session) {
+    console.error("\nNot logged in. Run: claw login\n");
+    process.exitCode = 1;
+    return;
+  }
+  // inject user identity into env so python can read it if needed
+  process.env.CLAW_USER_EMAIL = session.user?.email || "";
+  process.env.CLAW_USER_ID    = session.user?.id    || "";
+}
+// ──────────────────────────────────────────────────────────
   // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
   const KNOWN_COMMANDS = new Set([
     "chat", "ingest", "ingest-code", "ingest-pdf", "search",
