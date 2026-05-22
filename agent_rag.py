@@ -55,7 +55,7 @@ from agent_knowledge import (
 
 load_dotenv()
 
-RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-1.onrender.com")
+RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-f95s.onrender.com")
 
 logging.basicConfig(
     level=logging.INFO,
