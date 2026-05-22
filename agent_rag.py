@@ -2203,11 +2203,81 @@ class Agent:
             raise ValueError(f"Unsupported language '{language}'. Supported: {supported}")
         return specs[language]
 
+    def _screenshot_from_container(self, host_path: Path, timeout: int) -> Optional[bytes]:
+        """Run Playwright inside the sandbox container to screenshot the rendered HTML."""
+        screenshot_script = """
+    import asyncio
+    from playwright.async_api import async_playwright
+
+    async def main():
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page(viewport={"width": 1280, "height": 800})
+            await page.goto("http://localhost:8000", wait_until="networkidle", timeout=10000)
+            await page.screenshot(path="/sandbox/screenshot.png", full_page=True)
+            await browser.close()
+
+    asyncio.run(main())
+    """.strip()
+        script_path = host_path / "capture.py"
+        script_path.write_text(screenshot_script, encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--network", "host",  # needs localhost access
+                "--memory", "512m",
+                "-v", f"{host_path}:/sandbox",
+                "-w", "/sandbox",
+                "mcr.microsoft.com/playwright:v1.44.0-jammy",
+                "sh", "-c",
+                "python3 -m http.server 8000 --directory /sandbox &"
+                " sleep 2 && python3 /sandbox/capture.py",
+            ],
+            capture_output=True,
+            timeout=timeout + 15,
+        )
+        screenshot_path = host_path / "screenshot.png"
+        if result.returncode == 0 and screenshot_path.exists():
+            return screenshot_path.read_bytes()
+        return None
+
+    def _analyze_screenshot(self, image_bytes: bytes, language: str) -> str:
+        """Feed screenshot to a vision model and get a structured UI description."""
+        import base64
+        vision_model = "translategemma:4b"
+
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        prompt = (
+            f"You are analyzing a rendered {language.upper()} page screenshot."
+            "And you are an expert image analyzer you make no mistakes and you always explain exactly what you see"
+            "Describe it in this structured format:\n\n"
+            "LAYOUT: <overall page structure>\n"
+            "ELEMENTS: <list of visible UI elements>\n"
+            "STYLES: <colors, fonts, spacing observations>\n"
+            "ISSUES: <anything broken, overflowing, misaligned, or missing>\n"
+            "SUGGESTIONS: <concrete improvements>\n\n"
+            "Be precise and developer-focused."
+            "And at all cost never hallucinate with what you see explain with full precision"
+        )
+        try:
+            response = ollama.chat(
+                model=vision_model,
+                messages=[{
+                    "role": "user",
+                    "content": prompt,
+                    "images": [b64],
+                }],
+                stream=False,
+            )
+            return response.get("message", {}).get("content", "Screenshot analysis unavailable.")
+        except Exception as exc:
+            return f"Vision model error: {exc}"
     def execute_code_in_docker(self, code: str, language: str = "python", timeout: int = 10) -> Dict[str, Any]:
         if not code.strip():
             return {"error": "Missing code", "returncode": 2}
-        if len(code) > 100_000:
-            return {"error": "Code is too large; maximum size is 100000 characters.", "returncode": 2}
+        if len(code) > 100_000_00:
+            return {"error": "Code is too large; maximum size is 10,000,000 characters.", "returncode": 2}
 
         spec = self.docker_language_spec(language)
         timeout = min(max(1, timeout), 60)
@@ -2216,7 +2286,30 @@ class Agent:
             host_path = Path(temp_dir)
             code_path = host_path / spec["filename"]
             code_path.write_text(code, encoding="utf-8")
-
+            if spec.get("type") in ("browser",):
+                screenshot_bytes = self._screenshot_from_container(host_path, timeout)
+                if screenshot_bytes:
+                    analysis = self._analyze_screenshot(screenshot_bytes, language)
+                    return {
+                        "language": language,
+                        "image": spec["image"],
+                        "stdout": "",
+                        "stderr": "",
+                        "returncode": 0,
+                        "timeout": timeout,
+                        "ui_analysis": analysis,  # ← injected into tool result
+                        "screenshot_captured": True,
+                    }
+                else:
+                    return {
+                        "language": language,
+                        "image": spec["image"],
+                        "stdout": "",
+                        "stderr": "Screenshot failed — Playwright may not have rendered the page.",
+                        "returncode": 1,
+                        "timeout": timeout,
+                        "screenshot_captured": False,
+                    }
             docker_command = [
                 "docker",
                 "run",

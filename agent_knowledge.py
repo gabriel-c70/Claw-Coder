@@ -70,10 +70,15 @@ LANGUAGE_SPECS: Dict[str, Dict[str, str]] = {
     "tsx": {"module": "tree_sitter_typescript", "function": "language_tsx"},
     "json": {"module": "tree_sitter_json", "function": "language"},
     "html": {"module": "tree_sitter_html", "function": "language"},
-    "css": {"module": "tree_sitter_css", "function": "language"},
-    "java": {"module": "tree_sitter_java", "function": "language"},
+    "csharp": {"module": "tree_sitter_c_sharp", "function": "language"},
+    "cpp": {"module": "tree_sitter_cpp", "function": "language"},
+    "c": {"module": "tree_sitter_c", "function": "language"},
     "go": {"module": "tree_sitter_go", "function": "language"},
+    "java": {"module": "tree_sitter_java", "function": "language"},
     "rust": {"module": "tree_sitter_rust", "function": "language"},
+    "ruby":{'module': 'tree_sitter_ruby', 'function': 'language'},
+    "r": {"module": "tree_sitter_r", "function": "language"},
+    "css": {"module": "tree_sitter_css", "function": "language"}
 }
 
 EXTENSION_TO_LANGUAGE = {

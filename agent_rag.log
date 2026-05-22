@@ -3,3 +3,4 @@
 2026-05-10 13:20:44,553 - Tool failed: Ollama embedding failed. Make sure Ollama is running and the embedding model is pulled: ollama pull qwen3-embedding:4b
 2026-05-16 18:19:36,707 - Tool failed: Code file not found: /Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/example_python_code.py
 2026-05-16 18:20:28,177 - Tool failed: Code file not found: /Users/michealkasadha/PycharmProjects/pi.py/agent_work/Claw-Coder/agent_work/example_python_code.py
+2026-05-21 20:37:59,887 - Tool failed: Code file not found: /Users/michealkasadha/PycharmProjects/pi.py/Claw-Coder/open-cowork
