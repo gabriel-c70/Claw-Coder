@@ -12,7 +12,6 @@ tree-sitter-html
 chromadb
 ddgs
 pypdf
-hashlib
 shlex
 importlib
 argparse
