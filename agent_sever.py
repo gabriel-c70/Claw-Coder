@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
+import json
 
 load_dotenv()
 
@@ -44,19 +45,28 @@ def get_limit(tool_name: str) -> int:
     return TOOL_LIMITS.get(tool_name, DEFAULT_LIMIT)
 
 def verify_token(authorization: str) -> str:
-    """Validate Supabase JWT and return user_id."""
+    """Verify GitHub access token and return user_id."""
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
     try:
-        response = supabase.auth.get_user(token)
-        if not response.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return response.user.id
+        import urllib.request as _req
+        req = _req.Request(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+        with _req.urlopen(req, timeout=5) as resp:
+            user = json.loads(resp.read().decode("utf-8"))
+            if not user.get("id"):
+                raise HTTPException(status_code=401, detail="Invalid GitHub token")
+            return str(user["id"])
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Token error: {exc}") from exc
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {exc}")
 
 # ── models ────────────────────────────────────────────────────────────────────
 class CheckRequest(BaseModel):
