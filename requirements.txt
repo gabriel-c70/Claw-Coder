@@ -15,4 +15,7 @@ pypdf
 uvicorn
 fastapi
 dataclasses
+python-dotenv
 supabase
+tavily-python
+certifi

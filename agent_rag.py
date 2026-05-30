@@ -56,6 +56,7 @@ from agent_knowledge import (
 load_dotenv()
 
 RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-f95s.onrender.com")
+RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "30"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1157,24 +1158,35 @@ class Agent:
     def _check_rate_limit(self, tool_name: str) -> Optional[str]:
         """
         Call the FastAPI rate-limit server.
-        Returns None if allowed, or an error string if blocked/unreachable.
-        Reads the user's JWT from ~/.claw-coder/session.json (written by claw login).
+        Returns None if allowed, or an error string if blocked.
+        SSL-safe version with certifi support.
         """
         import json as _json
         import urllib.request as _req
         import urllib.error
+        import ssl
+
+        # tools that are purely local and free — skip check entirely
+        FREE_TOOLS = {
+            "read_files", "list_files", "edit_file", "create_file",
+            "delete_file", "apply_patch", "git_apply_patch", "gnu_patch",
+            "git_diff", "git_status", "extract_functions", "manage_memory",
+            "manage_plan", "open_default_browser", "search_code", "ask_user",
+        }
+        if tool_name in FREE_TOOLS:
+            return None
 
         session_path = Path.home() / ".claw-coder" / "session.json"
         if not session_path.exists():
-            return None  # no auth configured — skip limit check
+            return "Not logged in. Run: claw login"
 
         try:
             session = _json.loads(session_path.read_text(encoding="utf-8"))
             token = session.get("access_token", "")
             if not token:
-                return None
+                return "Not logged in. Run: claw login"
         except Exception:
-            return None
+            return "Could not read your saved session. Run: claw login"
 
         payload = _json.dumps({"tool_name": tool_name}).encode("utf-8")
         request = _req.Request(
@@ -1186,33 +1198,50 @@ class Agent:
             },
             method="POST",
         )
+
+        # fix Mac SSL certificate issue
+        ssl_context = ssl.create_default_context()
         try:
-            with _req.urlopen(request, timeout=5) as resp:
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            pass
+
+        try:
+            with _req.urlopen(request, timeout=RATE_LIMIT_TIMEOUT_SECONDS, context=ssl_context) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
-                remaining = data.get("remaining", "?")
+                source = data.get("source", "monthly")
                 logging.info(
-                    "Rate limit: %s — %s/%s used this month (%s remaining)",
+                    "Rate limit: %s — %s/%s used this month (%s remaining) [%s plan, %s]",
                     tool_name,
                     data.get("used"),
                     data.get("limit"),
-                    remaining,
+                    data.get("remaining"),
+                    data.get("plan", "free"),
+                    source,
                 )
                 return None  # allowed
         except urllib.error.HTTPError as exc:
-            if exc.code == 429:
+            if exc.code in {402, 429}:
                 try:
                     detail = _json.loads(exc.read().decode("utf-8")).get("detail", {})
                     msg = detail.get("message", f"Rate limit exceeded for {tool_name}")
                 except Exception:
                     msg = f"Rate limit exceeded for {tool_name}"
                 return msg
-            # any other HTTP error (401, 500) — fail open so the tool still runs
-            logging.warning("Rate limit server error %s for %s — skipping", exc.code, tool_name)
-            return None
+            if exc.code == 401:
+                return "Session expired. Run: claw login"
+            logging.warning("Rate limit server HTTP %s for %s", exc.code, tool_name)
+            return (
+                f"Could not verify credits for {tool_name} because the billing server "
+                f"returned HTTP {exc.code}. Try again in a moment."
+            )
         except Exception as exc:
-            # server not running — fail open
-            logging.warning("Rate limit server unreachable (%s) — skipping check", exc)
-            return None
+            logging.warning("Rate limit server unreachable (%s)", exc)
+            return (
+                f"Could not verify credits for {tool_name}. Render free services can take "
+                "a while to wake up; wait a few seconds and try again."
+            )
 
     def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
         try:
@@ -1852,21 +1881,73 @@ class Agent:
         if not query:
             return json.dumps({"status": "error", "error": "Missing query"})
 
-        result = self.search_info(query)
+        import urllib.request as _req
+        import urllib.error
+        import ssl
 
-
-        if not result.get("success"):
+        session_path = Path.home() / ".claw-coder" / "session.json"
+        try:
+            session_data = json.loads(session_path.read_text(encoding="utf-8"))
+            token = session_data.get("access_token", "")
+        except Exception:
             return json.dumps({
                 "status": "error",
-                "query": query,
-                "error": result.get("error", "Search failed. Check internet/search provider."),
+                "error": "Not logged in. Run: claw login",
             })
 
-        return json.dumps({
-            "status": "ok",
-            "query": query,
-            "results": result["results"],
-        }, ensure_ascii=False)
+        if not token:
+            return json.dumps({
+                "status": "error",
+                "error": "Not logged in. Run: claw login",
+            })
+
+        payload = json.dumps({"query": query}).encode("utf-8")
+        request = _req.Request(
+            f"{RATE_LIMIT_API_URL}/search",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
+
+        ssl_context = ssl.create_default_context()
+        try:
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            pass
+
+        try:
+            with _req.urlopen(request, timeout=RATE_LIMIT_TIMEOUT_SECONDS, context=ssl_context) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                try:
+                    detail = json.loads(exc.read().decode("utf-8")).get("detail", {})
+                    msg = detail.get("message", "Search limit reached")
+                except Exception:
+                    msg = "Search limit reached. Upgrade to Pro for unlimited searches."
+                return json.dumps({"status": "error", "error": msg})
+            if exc.code == 401:
+                return json.dumps({
+                    "status": "error",
+                    "error": "Session expired. Run: claw login",
+                })
+            return json.dumps({
+                "status": "error",
+                "error": f"Search server error ({exc.code}). Try again later.",
+            })
+        except Exception as exc:
+            return json.dumps({
+                "status": "error",
+                "error": (
+                    "Search unavailable because the billing/search server could not be reached. "
+                    "Render free services can take a while to wake up; wait a few seconds and try again. "
+                    f"Details: {exc}"
+                ),
+            })
 
     def _open_browser_tool(self, tool_input: Dict[str, Any]) -> str:
         url = str(tool_input.get("url", "")).strip()

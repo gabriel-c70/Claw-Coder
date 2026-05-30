@@ -41,9 +41,19 @@ function loadSession() {
   if (!fs.existsSync(SESSION_FILE)) return null;
   try {
     const data = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
+
+    // fully expired — force re-login
     if (data.expires_at && Date.now() / 1000 > data.expires_at - 60) {
       return null;
     }
+
+    // silently extend if less than 7 days remaining — user never sees a prompt
+    const sevenDays = 7 * 24 * 60 * 60;
+    if (data.expires_at && (data.expires_at - Date.now() / 1000) < sevenDays) {
+      data.expires_at = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
+      saveSession(data);
+    }
+
     return data;
   } catch {
     return null;
@@ -55,15 +65,12 @@ function clearSession() {
 }
 
 // ── Upsert user into Supabase using admin API ─────────────────────────────────
-// This creates the user in Supabase if they don't exist,
-// or returns their existing account if they do.
 async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, githubLogin, avatarUrl) {
   if (!serviceKey) {
-    // no service key — skip Supabase upsert, just use GitHub session
     return null;
   }
 
-  // check if user already exists in Supabase by email
+  // check if user already exists
   const listRes = await fetch(
     `${supabaseUrl}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
     {
@@ -78,7 +85,7 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
     const listData = await listRes.json();
     const existing = listData.users?.find(u => u.email === email);
     if (existing) {
-      // user exists — create a session token for them
+      // user exists — create a session for them
       const signInRes = await fetch(
         `${supabaseUrl}/auth/v1/admin/users/${existing.id}/session`,
         {
@@ -99,7 +106,6 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
           expires_at: signInData.expires_at,
         };
       }
-      // if session creation fails just return the user id
       return { supabase_user_id: existing.id };
     }
   }
@@ -114,7 +120,7 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
     },
     body: JSON.stringify({
       email: email,
-      email_confirm: true,          // skip email confirmation
+      email_confirm: true,
       user_metadata: {
         github_id: githubId,
         user_name: githubLogin,
@@ -180,7 +186,6 @@ async function login() {
   });
   const device = await deviceRes.json();
 
-  // check GitHub didn't return an error
   if (device.error) {
     throw new Error(
       `GitHub device flow error: ${device.error}\n` +
@@ -271,8 +276,6 @@ async function login() {
     }
 
     // Step 5 — upsert user into Supabase
-    // This sends the GitHub user data to Supabase and creates
-    // or retrieves their Supabase account
     console.log("Connecting to Supabase...");
     const supabaseData = await upsertSupabaseUser(
       supabaseUrl,
@@ -283,16 +286,15 @@ async function login() {
       githubUser.avatar_url,
     );
 
-    // Step 6 — build and save session
+    // Step 6 — build and save session with 30 day expiry
     const session = {
-      // use Supabase token if we got one, otherwise GitHub token
       access_token: supabaseData?.access_token || tokenData.access_token,
       refresh_token: supabaseData?.refresh_token || null,
       expires_at: supabaseData?.expires_at
         ? Math.floor(new Date(supabaseData.expires_at).getTime() / 1000)
-        : Math.floor(Date.now() / 1000) + (8 * 60 * 60),
+        : Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days
       provider: "github",
-      github_token: tokenData.access_token,   // always keep GitHub token too
+      github_token: tokenData.access_token,
       user: {
         id: supabaseData?.supabase_user_id || String(githubUser.id),
         email: primaryEmail,
@@ -309,9 +311,10 @@ async function login() {
     if (supabaseData?.supabase_user_id) {
       console.log(`\n✓ Logged in as ${primaryEmail}`);
       console.log(`  Supabase user ID: ${supabaseData.supabase_user_id}`);
+      console.log(`  Session valid for 30 days — you won't need to login again.\n`);
     } else {
       console.log(`\n✓ Logged in as ${primaryEmail}`);
-      console.log(`  (Add SUPABASE_SERVICE_KEY to .env to sync user to Supabase)`);
+      console.log(`  Session valid for 30 days — you won't need to login again.\n`);
     }
 
     return session;

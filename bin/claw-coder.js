@@ -10,6 +10,21 @@ const packageRoot = path.resolve(__dirname, "..");
 const pythonAgent = path.join(packageRoot, "agent_rag.py");
 const requirementsFile = path.join(packageRoot, "requirements.txt");
 
+function loadEnvFile() {
+  const envFile = path.join(packageRoot, ".env");
+  if (!fs.existsSync(envFile)) return;
+  for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const [key, ...rest] = trimmed.split("=");
+    if (key && rest.length && !process.env[key.trim()]) {
+      process.env[key.trim()] = rest.join("=").trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+}
+
+loadEnvFile();
+
 const HELP = `
 Claw Coder
 
@@ -27,6 +42,10 @@ Commands:
   languages                    Show Tree-sitter language support
   setup                        Install Python dependencies for Claw Coder
   doctor                       Check local Node/Python/Ollama setup
+  usage                        Show this month's cloud tool usage
+  credits                      Show paid credit balance
+  buy                          Subscribe for $10/month credits
+  topup                        Buy extra pay-as-you-go credits
 
 Common options:
   --top-k <n>                  Number of results to return
@@ -50,6 +69,10 @@ Examples:
   login [provider]             Log in via OAuth (default: github)
   logout                       Clear saved session
   whoami                       Show current logged-in user
+  usage                        Show usage and remaining free allowance
+  credits                      Show paid credit balance
+  buy                          Open checkout for the $10/month plan
+  topup                        Open checkout for extra credits
 
 `;
 
@@ -222,6 +245,50 @@ function runDoctor() {
   }
 }
 
+function getApiUrl() {
+  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder-f95s.onrender.com").replace(/\/$/, "");
+}
+
+async function apiFetch(pathname, session, options = {}) {
+  const timeoutMs = Number(process.env.RATE_LIMIT_TIMEOUT_MS || 45000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${getApiUrl()}${pathname}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { detail: text };
+    }
+    if (!response.ok) {
+      const detail = data.detail || data.error || data;
+      const message = typeof detail === "string" ? detail : detail.message || JSON.stringify(detail);
+      throw new Error(message);
+    }
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function requireSession() {
+  const session = loadSession();
+  if (!session) {
+    throw new Error("Not logged in. Run: claw login");
+  }
+  return session;
+}
+
 function buildAgentArgs(command, args) {
   const globalOptions = collectGlobalOptions(args);
   const topK = readOption(args, ["--top-k"]);
@@ -352,10 +419,170 @@ function main() {
     }
   return;
     }
+   if (command === "usage") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+
+    apiFetch("/usage", session)
+      .then((data) => {
+        const plan = data.plan || "free";
+        console.log(`\n  Claw Coder usage  ${data.month}  ${plan.toUpperCase()} plan`);
+        console.log(`  Paid credits: ${data.credits || 0}\n`);
+
+        const usage = data.usage || {};
+        const tools = Object.keys(usage).sort();
+
+        if (tools.length === 0) {
+          console.log("  No tools used this month yet.\n");
+          return;
+        }
+
+        // column widths
+        const nameWidth = 32;
+        const barWidth  = 12;
+
+        console.log(
+          `  ${"Tool".padEnd(nameWidth)} ${"Usage".padEnd(barWidth)}  Count     Remaining`
+        );
+        console.log("  " + "─".repeat(nameWidth + barWidth + 22));
+
+        for (const tool of tools) {
+          const { used, limit, remaining } = usage[tool];
+          const isPro = limit >= 999999;
+          const pct   = isPro ? 0 : Math.min(1, used / limit);
+          const filled = Math.round(pct * barWidth);
+          const bar   = isPro
+            ? "∞ unlimited  "
+            : "█".repeat(filled).padEnd(barWidth, "░");
+
+          const countStr    = isPro ? `${used}` : `${used}/${limit}`;
+          const remainStr   = isPro ? "∞" : `${remaining} left`;
+
+          // warn if over 80%
+          const warn = !isPro && pct >= 0.8 ? " ⚠" : "";
+
+          console.log(
+            `  ${tool.padEnd(nameWidth)} ${bar}  ${countStr.padEnd(10)}${remainStr}${warn}`
+          );
+        }
+
+        if (plan === "free") {
+          console.log("\n  Free allowance is used first. After that, paid credits are used.");
+          console.log("  Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
+        } else {
+          console.log("\n  All tools unlimited on Pro plan.\n");
+        }
+      })
+      .catch((err) => {
+        console.error(`Could not fetch usage: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === "credits") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    apiFetch("/plan", session)
+      .then((data) => {
+        console.log(`\n  Plan: ${String(data.plan || "free").toUpperCase()}`);
+        console.log(`  Paid credits: ${data.credits || 0}`);
+        console.log("  Limited tools use free monthly allowance first, then paid credits.\n");
+      })
+      .catch((err) => {
+        console.error(`Could not fetch credits: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === "buy") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("Creating checkout for the $10/month Claw Coder plan...");
+    apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({}) })
+      .then((data) => {
+        if (!data.checkout_url) {
+          throw new Error("The billing server did not return a checkout URL.");
+        }
+        console.log(`\n  Monthly credits: ${data.credits}`);
+        console.log(`  Checkout: ${data.checkout_url}\n`);
+        const opener = process.platform === "darwin" ? "open"
+          : process.platform === "win32" ? "start"
+          : "xdg-open";
+        try {
+          spawnSync(opener, [data.checkout_url], {
+            stdio: "ignore",
+            shell: process.platform === "win32",
+          });
+        } catch {}
+      })
+      .catch((err) => {
+        console.error(`Could not create checkout: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === "topup") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("Creating checkout for extra Claw Coder credits...");
+    apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({ mode: "topup" }) })
+      .then((data) => {
+        if (!data.checkout_url) {
+          throw new Error("The billing server did not return a checkout URL.");
+        }
+        console.log(`\n  Extra credits: ${data.credits}`);
+        console.log(`  Checkout: ${data.checkout_url}\n`);
+        const opener = process.platform === "darwin" ? "open"
+          : process.platform === "win32" ? "start"
+          : "xdg-open";
+        try {
+          spawnSync(opener, [data.checkout_url], {
+            stdio: "ignore",
+            shell: process.platform === "win32",
+          });
+        } catch {}
+      })
+      .catch((err) => {
+        console.error(`Could not create top-up checkout: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
 
 // ── AUTH GATE ──────────────────────────────────────────────
 // skip auth for setup/doctor/help (they don't touch the agent)
-  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v"]);
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup"]);
   if (!NO_AUTH_COMMANDS.has(command)) {
     const session = loadSession();
   if (!session) {
@@ -372,7 +599,7 @@ function main() {
   const KNOWN_COMMANDS = new Set([
     "chat", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
-    "setup", "doctor", "raw", "embedding"
+    "setup", "doctor", "raw", "embedding","usage", "credits", "buy", "topup"
   ]);
 
   if (!KNOWN_COMMANDS.has(command)) {

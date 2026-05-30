@@ -25,7 +25,9 @@
   "files": [
     "bin",
     "agent_rag.py",
+    "agent_sever.py",
     "agent_knowledge.py",
+    "supabase",
     "requirements.txt",
     "README.md",
     "LICENSE"
