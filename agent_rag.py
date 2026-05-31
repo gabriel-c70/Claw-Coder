@@ -68,7 +68,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 DEFAULT_CHAT_MODEL = ""
-DEFAULT_EMBEDDING_MODEL = ""
+DEFAULT_EMBEDDING_MODEL = os.getenv("CLAW_EMBEDDING_MODEL", "qwen3-embedding:4b")
 DEFAULT_DB_PATH = "agent_rag_chroma_db"
 DEFAULT_COLLECTION = "agent_mixed_knowledge"
 DEFAULT_KNOWLEDGE_GRAPH_PATH = DEFAULT_GRAPH_PATH
@@ -2752,13 +2752,19 @@ def main() -> None:
 |                                                   |                                 
 |===================================================|
         """)
-        while True:
-            user_input = input("Type anything to interact with Claw-Coder: ")
-            print("========================================================")
-            if user_input.lower() in {"exit", "quit"}:
-                break
-            print(f"\nClaw-Coder: {agent.chat(user_input)}\n")
-            print("=========================================================")
+        try:
+            while True:
+                user_input = input("Type anything to interact with Claw-Coder: ")
+                print("========================================================")
+                if user_input.lower() in {"exit", "quit"}:
+                    break
+
+                print(f"\nClaw-Coder: {agent.chat(user_input)}\n")
+                print("=========================================================")
+        except KeyboardInterrupt:
+            print("\nclaw chatThank you for using claw-coder you can come back to chat any time: `claw chat`")
+
+
 
 
 if __name__ == "__main__":

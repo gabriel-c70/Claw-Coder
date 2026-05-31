@@ -32,7 +32,7 @@ DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", os.getenv("DODO_P
 DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CREDITS_PER_PURCHASE", "100")))
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
 DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "100"))
-DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder-f95s.onrender.com/payment-success")
+DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://silent-navigator-dreamlike.ngrok-free.dev/payment-success")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment")
@@ -87,23 +87,58 @@ def get_limit(tool_name: str, plan: str = "free") -> int:
         return PRO_LIMIT
     return TOOL_LIMITS.get(tool_name, PRO_LIMIT)  # not in limits = unlimited
 
-
 def verify_token(authorization: str) -> str:
-    """Validate Supabase JWT and return user_id."""
+    """Accept both Supabase JWT and GitHub access tokens."""
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
+
+    # try Supabase JWT first
     try:
         response = supabase.auth.get_user(token)
-        if not response.user:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        return response.user.id
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Token error: {exc}") from exc
+        if response.user:
+            return response.user.id
+    except Exception:
+        pass
 
+    # fall back — verify with GitHub API directly
+        # fall back — verify with GitHub API directly
+        try:
+            import urllib.request as _req
+            import ssl
 
+            # fix Mac SSL certificate issue
+            ssl_context = ssl.create_default_context()
+            try:
+                import certifi
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                pass
+
+            req = _req.Request(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                },
+            )
+            with _req.urlopen(req, timeout=10, context=ssl_context) as resp:
+                user = json.loads(resp.read().decode("utf-8"))
+                github_id = user.get("id")
+                if not github_id:
+                    raise HTTPException(status_code=401, detail="Invalid token")
+                # find matching Supabase user by github_id in user_metadata
+                users_resp = supabase.auth.admin.list_users()
+                for u in users_resp:
+                    meta = u.user_metadata or {}
+                    if str(meta.get("github_id")) == str(github_id):
+                        return u.id
+                # no Supabase user matched — use github_{id} as fallback user key
+                return f"github_{github_id}"
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"Token verification failed: {exc}")
 def get_user_plan(user_id: str) -> str:
     """Check if user has an active pro subscription."""
     try:

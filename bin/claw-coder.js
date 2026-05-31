@@ -44,7 +44,7 @@ Commands:
   doctor                       Check local Node/Python/Ollama setup
   usage                        Show this month's cloud tool usage
   credits                      Show paid credit balance
-  buy                          Subscribe for $10/month credits
+  buy                          Subscribe for $30/month credits
   topup                        Buy extra pay-as-you-go credits
 
 Common options:
@@ -71,7 +71,7 @@ Examples:
   whoami                       Show current logged-in user
   usage                        Show usage and remaining free allowance
   credits                      Show paid credit balance
-  buy                          Open checkout for the $10/month plan
+  buy                          Open checkout for the $30/month plan
   topup                        Open checkout for extra credits
 
 `;
@@ -519,7 +519,7 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    console.log("Creating checkout for the $10/month Claw Coder plan...");
+    console.log("Creating checkout for the $30/month Claw Coder plan...");
     apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({}) })
       .then((data) => {
         if (!data.checkout_url) {

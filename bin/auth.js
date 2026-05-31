@@ -7,28 +7,36 @@ const path = require("node:path");
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
 
-function getSupabaseConfig() {
+// ── Baked-in config — users need zero setup ───────────────────────────────────
+const BAKED_CONFIG = {
+  supabaseUrl:    "https://yourref.supabase.co",
+  anonKey:        "your-anon-key",
+  githubClientId: "your-github-client-id",
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
+function loadEnvFile() {
   const envFile = path.join(path.resolve(__dirname, ".."), ".env");
   if (fs.existsSync(envFile)) {
     for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
-      const [key, ...rest] = line.split("=");
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const [key, ...rest] = trimmed.split("=");
       if (key && rest.length && !process.env[key.trim()]) {
-        process.env[key.trim()] = rest.join("=").trim();
+        process.env[key.trim()] = rest.join("=").trim().replace(/^['"]|['"]$/g, "");
       }
     }
   }
-  const url = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
-  const githubClientId = process.env.GITHUB_CLIENT_ID;
+}
 
-  if (!url || !anonKey) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY in .env");
-  }
-  if (!githubClientId) {
-    throw new Error("Missing GITHUB_CLIENT_ID in .env");
-  }
-  return { url, anonKey, serviceKey, githubClientId };
+function getSupabaseConfig() {
+  loadEnvFile();
+  return {
+    url:            process.env.SUPABASE_URL      || BAKED_CONFIG.supabaseUrl,
+    anonKey:        process.env.SUPABASE_ANON_KEY || BAKED_CONFIG.anonKey,
+    serviceKey:     process.env.SUPABASE_SERVICE_KEY || null,
+    githubClientId: process.env.GITHUB_CLIENT_ID  || BAKED_CONFIG.githubClientId,
+  };
 }
 
 function saveSession(session) {
@@ -47,7 +55,7 @@ function loadSession() {
       return null;
     }
 
-    // silently extend if less than 7 days remaining — user never sees a prompt
+    // silently extend if less than 7 days remaining
     const sevenDays = 7 * 24 * 60 * 60;
     if (data.expires_at && (data.expires_at - Date.now() / 1000) < sevenDays) {
       data.expires_at = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
@@ -59,18 +67,13 @@ function loadSession() {
     return null;
   }
 }
-
 function clearSession() {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
 }
 
-// ── Upsert user into Supabase using admin API ─────────────────────────────────
 async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, githubLogin, avatarUrl) {
-  if (!serviceKey) {
-    return null;
-  }
+  if (!serviceKey) return null;
 
-  // check if user already exists
   const listRes = await fetch(
     `${supabaseUrl}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
     {
@@ -85,7 +88,6 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
     const listData = await listRes.json();
     const existing = listData.users?.find(u => u.email === email);
     if (existing) {
-      // user exists — create a session for them
       const signInRes = await fetch(
         `${supabaseUrl}/auth/v1/admin/users/${existing.id}/session`,
         {
@@ -110,7 +112,6 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
     }
   }
 
-  // user doesn't exist — create them
   const createRes = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
     method: "POST",
     headers: {
@@ -119,7 +120,7 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      email: email,
+      email,
       email_confirm: true,
       user_metadata: {
         github_id: githubId,
@@ -142,7 +143,6 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
 
   const newUser = await createRes.json();
 
-  // create a session for the new user
   const sessionRes = await fetch(
     `${supabaseUrl}/auth/v1/admin/users/${newUser.id}/session`,
     {
@@ -168,21 +168,21 @@ async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, gith
   return { supabase_user_id: newUser.id };
 }
 
-// ── Main login function ───────────────────────────────────────────────────────
 async function login() {
   const { url: supabaseUrl, anonKey, serviceKey, githubClientId } = getSupabaseConfig();
+
+  if (!githubClientId || githubClientId === "your-github-client-id") {
+    throw new Error(
+      "GITHUB_CLIENT_ID is not set.\n" +
+      "Add it to your .env file: GITHUB_CLIENT_ID=your-client-id"
+    );
+  }
 
   // Step 1 — request device code from GitHub
   const deviceRes = await fetch("https://github.com/login/device/code", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    },
-    body: JSON.stringify({
-      client_id: githubClientId,
-      scope: "read:user user:email",
-    }),
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ client_id: githubClientId, scope: "read:user user:email" }),
   });
   const device = await deviceRes.json();
 
@@ -209,15 +209,11 @@ async function login() {
   console.log(`│  Code:  ${device.user_code.padEnd(32)}│`);
   console.log("└─────────────────────────────────────────┘\n");
 
-  // auto open browser
   const cmd = process.platform === "darwin" ? "open"
              : process.platform === "win32"  ? "start"
              : "xdg-open";
   try {
-    require("child_process").execSync(
-      `${cmd} "${device.verification_uri}"`,
-      { stdio: "ignore" }
-    );
+    require("child_process").execSync(`${cmd} "${device.verification_uri}"`, { stdio: "ignore" });
   } catch {}
 
   // Step 3 — poll GitHub until user approves
@@ -230,10 +226,7 @@ async function login() {
 
     const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify({
         client_id: githubClientId,
         device_code: device.device_code,
@@ -253,70 +246,54 @@ async function login() {
 
     // Step 4 — get user info from GitHub
     const githubUserRes = await fetch("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
-        Accept: "application/json",
-      },
+      headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: "application/json" },
     });
     const githubUser = await githubUserRes.json();
 
     const githubEmailRes = await fetch("https://api.github.com/user/emails", {
-      headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
-        Accept: "application/json",
-      },
+      headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: "application/json" },
     });
     const githubEmails = await githubEmailRes.json();
     const primaryEmail = githubEmails.find(e => e.primary)?.email || githubUser.email;
 
     if (!primaryEmail) {
-      throw new Error(
-        "Could not get email from GitHub. Make sure your GitHub account has a public or primary email."
-      );
+      throw new Error("Could not get email from GitHub. Make sure your account has a primary email.");
     }
 
     // Step 5 — upsert user into Supabase
     console.log("Connecting to Supabase...");
     const supabaseData = await upsertSupabaseUser(
-      supabaseUrl,
-      serviceKey,
-      primaryEmail,
-      String(githubUser.id),
-      githubUser.login,
-      githubUser.avatar_url,
+      supabaseUrl, serviceKey, primaryEmail,
+      String(githubUser.id), githubUser.login, githubUser.avatar_url,
     );
 
-    // Step 6 — build and save session with 30 day expiry
+    // Step 6 — build session
+    // NOTE: if supabaseData has no access_token, fall back to GitHub token
+    const accessToken = supabaseData?.access_token || tokenData.access_token;
+    const expiresAt = supabaseData?.expires_at
+      ? Math.floor(new Date(supabaseData.expires_at).getTime() / 1000)
+      : Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
+
     const session = {
-      access_token: supabaseData?.access_token || tokenData.access_token,
+      access_token:  accessToken,
       refresh_token: supabaseData?.refresh_token || null,
-      expires_at: supabaseData?.expires_at
-        ? Math.floor(new Date(supabaseData.expires_at).getTime() / 1000)
-        : Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days
-      provider: "github",
-      github_token: tokenData.access_token,
+      expires_at:    expiresAt,
+      provider:      "github",
+      github_token:  tokenData.access_token,
       user: {
-        id: supabaseData?.supabase_user_id || String(githubUser.id),
+        id:    supabaseData?.supabase_user_id || String(githubUser.id),
         email: primaryEmail,
         user_metadata: {
-          user_name: githubUser.login,
+          user_name:  githubUser.login,
           avatar_url: githubUser.avatar_url,
-          github_id: String(githubUser.id),
+          github_id:  String(githubUser.id),
         },
       },
     };
 
     saveSession(session);
-
-    if (supabaseData?.supabase_user_id) {
-      console.log(`\n✓ Logged in as ${primaryEmail}`);
-      console.log(`  Supabase user ID: ${supabaseData.supabase_user_id}`);
-      console.log(`  Session valid for 30 days — you won't need to login again.\n`);
-    } else {
-      console.log(`\n✓ Logged in as ${primaryEmail}`);
-      console.log(`  Session valid for 30 days — you won't need to login again.\n`);
-    }
-
+    console.log(`\n✓ Logged in as ${primaryEmail}`);
+    console.log(`  Session valid for 30 days — you won't need to login again.\n`);
     return session;
   }
 
