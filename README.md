@@ -5,7 +5,7 @@
 ### Claw coder is a local first AI agent that turns local coding small LLMs into powerful AI agents that actually work here is how:
 #### Claw coder has access to knowledge graph which means it can ingest files and directories and actually map them and understand what each part does to the other without even needing powerful GPUs and the knowledge graph is lightweight which means it runs completely on you laptop
 
-![claw chat displayed](Claw-Coder/Screenshot 2026-06-03 at 11.32.01.png)
+![claw chat displayed](screenshoot1.png)
 
 > - Claw coder has access to tree-sitter + RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
@@ -86,7 +86,7 @@ claw chat
 ```
 - This is a screenshot of claw --help with all the commands displayed
 
-![claw --help displayed](Claw-Coder/Screenshot 2026-06-03 at 11.48.53.png)
+![claw --help displayed](Claw-Coder/screenshoot3.png)
 
 ---
 Useful options:
@@ -104,7 +104,7 @@ claw graph "calls run_terminal" --top-k 10 --depth 3
 claw usage
 ````
 
-![claw usage displayed](Claw-Coder/Screenshot 2026-06-03 at 11.44.12.png)
+![claw usage displayed](Claw-Coder/screenshoot2.png)
 
 ---
 You can also use the longer binary name:
