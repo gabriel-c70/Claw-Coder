@@ -41,7 +41,8 @@
 |Claude    |No          |Yes                     |No                                                            |No                                    |
 |__________|____________|________________________|______________________________________________________________|______________________________________|
 ````
-### Caution: Claw-Coder is indeed something else, but it is not perfect it can make mistakes and mess up don't be too open to claw-coder with your environment.
+- ### Caution: Claw-Coder is indeed something else, but it is not perfect it can make mistakes and mess up don't be too open to claw-coder with your environment.
+- ### But this has been thought of at file stage the AI has a directory called workspace where it works from without destroying your file structure.
 
 ---
 
