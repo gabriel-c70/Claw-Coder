@@ -2755,12 +2755,12 @@ def main() -> None:
         try:
             while True:
                 user_input = input("Type anything to interact with Claw-Coder: ")
-                print("========================================================")
+                print("=============================================================================================================================================================")
                 if user_input.lower() in {"exit", "quit"}:
                     break
 
                 print(f"\nClaw-Coder: {agent.chat(user_input)}\n")
-                print("=========================================================")
+                print("=============================================================================================================================================================")
         except KeyboardInterrupt:
             print("\nclaw chatThank you for using claw-coder you can come back to chat any time: `claw chat`")
 
