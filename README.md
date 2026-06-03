@@ -113,6 +113,11 @@ You can also use the longer binary name:
 claw-coder doctor
 ```
 ---
+Sign in and log in:
+```bash
+claw login
+```
+---
 > Source Code: [claw-coder](https://github.com/gabriel-c70/Claw-Coder.git) 
 >
 > You can also contribute and make [claw-coder](https://github.com/gabriel-c70/Claw-Coder.git) the best AI agent ever created by just contributing a line of code.
