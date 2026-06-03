@@ -1,14 +1,11 @@
 # Claw Coder
-<p align="center">
-  <img src="Claw-Coder/logo3.png" alt="Claw-coder logo" width="280" />
-</p>
+
+![claw-coder logo](Claw-Coder/logo3.png)
 
 ### Claw coder is a local first AI agent that turns local coding small LLMs into powerful AI agents that actually work here is how:
 #### Claw coder has access to knowledge graph which means it can ingest files and directories and actually map them and understand what each part does to the other without even needing powerful GPUs and the knowledge graph is lightweight which means it runs completely on you laptop
 
-<p align="center">
-  <img src="Claw-Coder/Screenshot 2026-06-03 at 11.32.01.png" alt="claw chat displayed" width="2200" />
-</p>
+![claw chat displayed](Claw-Coder/Screenshot 2026-06-03 at 11.32.01.png)
 
 > - Claw coder has access to tree-sitter + RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
@@ -88,9 +85,8 @@ claw search "where is graph reranking implemented?" --top-k 5
 claw chat
 ```
 - This is a screenshot of claw --help with all the commands displayed
-<p align="center">
-  <img src="Claw-Coder/Screenshot 2026-06-03 at 11.48.53.png" alt="claw --help image" width="2200" />
-</p>
+
+![claw --help displayed](Claw-Coder/Screenshot 2026-06-03 at 11.48.53.png)
 
 ---
 Useful options:
@@ -108,9 +104,7 @@ claw graph "calls run_terminal" --top-k 10 --depth 3
 claw usage
 ````
 
-<p align="center">
-  <img src="Claw-Coder/Screenshot 2026-06-03 at 11.44.12.png" alt="claw usage displayed" width="2200" />
-</p>
+![claw usage displayed](Claw-Coder/Screenshot 2026-06-03 at 11.44.12.png)
 
 ---
 You can also use the longer binary name:
