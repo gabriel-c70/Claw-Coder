@@ -1451,15 +1451,15 @@ class Agent:
                     walk(child)
 
             walk(root)
-            return {
+            return json.dumps({
                 "success": True,
                 "functions": functions,
-            }
+            })
         except Exception as exc:
-            return {
+            return json.dumps({
                 "success": False,
                 "error": str(exc)
-            }
+            })
 
     def _run_tests_tool(self, tool_input: Dict[str, Any]) -> str:
         path = Path(tool_input["path"]).resolve()
@@ -1527,8 +1527,8 @@ class Agent:
                         "content": line.strip()
                     })
                     if len(matches) >= max_results:
-                        return {"success": True, "matches": matches}
-        return {"success": True, "matches": matches}
+                        return json.dumps({"success": True, "matches": matches})
+        return json.dumps({"success": True, "matches": matches})
     def _list_files_tool(self, tool_input: Dict[str, Any]) -> str:
         path = Path(tool_input.get("path", ".")).resolve()
         recursive = tool_input.get("recursive", False)
@@ -1565,9 +1565,9 @@ class Agent:
                 raise ToolError("File already exists")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            return {"success": True, "path": str(target), "bytes_written": len(content.encode("utf-8"))}
+            return json.dumps({"success": True, "path": str(target), "bytes_written": len(content.encode("utf-8"))})
         except Exception as exc:
-            return {"success": False, "reason": str(exc)}
+            return json.dumps({"success": False, "reason": str(exc)})
 
     def _delete_file_tool(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -1577,9 +1577,9 @@ class Agent:
             if target.is_dir():
                 raise ToolError("Refusing to delete directory")
             target.unlink()
-            return {"success": True}
+            return json.dumps({"success": True})
         except Exception as exc:
-            return {"success": False, "reason": str(exc)}
+            return json.dumps({"success": False, "reason": str(exc)})
 
 
     def _search_knowledge_base_tool(self, tool_input: Dict[str, Any]) -> str:
@@ -1774,7 +1774,7 @@ class Agent:
                 "message": "Patch applied successfully",
             }
         except Exception as exc:
-            return {"success": False, "error": str(exc)}
+            return json.dumps({"success": False, "error": str(exc)})
     def _edit_file_tool(self, tool_input: Dict[str, Any]) -> str:
         path = Path(tool_input["path"]).resolve()
         operation = tool_input["operation"]
@@ -1830,11 +1830,11 @@ class Agent:
         )
 
         if result.returncode != 0:
-            return {
+            return json.dumps({
                 "success": False,
                 "error": result.stderr[-2000:],
-            }
-        return {"success": True, "message": "Patch applied"}
+            })
+        return json.dumps({"success": True, "message": "Patch applied"})
 
     def _gnu_patch_tool(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         workspace = Path(tool_input["workspace"]).resolve()
@@ -1847,11 +1847,11 @@ class Agent:
             text=True,
             capture_output=True,
         )
-        return {
+        return json.dumps({
             "success": result.returncode == 0,
             "stdout": result.stdout[-2000:],  # same fix
             "stderr": result.stderr[-2000:],
-        }
+        })
     def get_env(self, key: str) -> str:
         value = os.getenv(key)
         if not value:
@@ -1872,9 +1872,9 @@ class Agent:
                     "url": item["url"],
                     "content": item["content"][:1000],
                 })
-            return {"success": True, "results": results}
+            return json.dumps({"success": True, "results": results})
         except Exception as exc:
-            return {"success": False, "error": str(exc)}
+            return json.dumps({"success": False, "error": str(exc)})
 
     def _search_stuff_tool(self, tool_input: Dict[str, Any]) -> str:
         query = str(tool_input.get("query", "")).strip()
@@ -2023,19 +2023,19 @@ class Agent:
                 text=True,
                 timeout=max(1, timeout),
             )
-            return {
+            return json.dumps({
                 "command": command,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "returncode": result.returncode,
-            }
+            })
         except subprocess.TimeoutExpired as exc:
-            return {
+            return json.dumps({
                 "command": command,
                 "stdout": self.decode_process_output(exc.stdout),
                 "stderr": f"Command timed out after {timeout} seconds.",
                 "returncode": 124,
-            }
+            })
 
     def _run_terminal_tool(self, tool_input: Dict[str, Any]) -> str:
         command = str(tool_input.get("command", "")).strip()
@@ -2427,12 +2427,12 @@ class Agent:
         if not code.strip():
             return {"error": "Missing code", "returncode": 2}
         if len(code) > 100_000_00:
-            return {"error": "Code is too large; maximum size is 10,000,000 characters.", "returncode": 2}
+            return json.dumps({"error": "Code is too large; maximum size is 10,000,000 characters.", "returncode": 2})
 
         spec = self.docker_language_spec(language)
         timeout = min(max(1, timeout), 60)
 
-        with tempfile.TemporaryDirectory(prefix="claw-coder-sandbox-") as temp_dir:
+        with (tempfile.TemporaryDirectory(prefix="claw-coder-sandbox-") as temp_dir):
             host_path = Path(temp_dir)
             code_path = host_path / spec["filename"]
             code_path.write_text(code, encoding="utf-8")
@@ -2440,7 +2440,7 @@ class Agent:
                 screenshot_bytes = self._screenshot_from_container(host_path, timeout)
                 if screenshot_bytes:
                     analysis = self._analyze_screenshot(screenshot_bytes, language)
-                    return {
+                    return json.dumps({
                         "language": language,
                         "image": spec["image"],
                         "stdout": "",
@@ -2449,9 +2449,9 @@ class Agent:
                         "timeout": timeout,
                         "ui_analysis": analysis,  # ← injected into tool result
                         "screenshot_captured": True,
-                    }
+                    })
                 else:
-                    return {
+                    return json.dumps({
                         "language": language,
                         "image": spec["image"],
                         "stdout": "",
@@ -2459,7 +2459,7 @@ class Agent:
                         "returncode": 1,
                         "timeout": timeout,
                         "screenshot_captured": False,
-                    }
+                    })
             docker_command = [
                 "docker",
                 "run",
@@ -2489,32 +2489,32 @@ class Agent:
                     text=True,
                     timeout=timeout,
                 )
-                return {
+                return json.dumps({
                     "language": language,
                     "image": spec["image"],
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "returncode": result.returncode,
                     "timeout": timeout,
-                }
+                })
             except FileNotFoundError:
-                return {
+                return json.dumps({
                     "language": language,
                     "image": spec["image"],
                     "stdout": "",
                     "stderr": "Docker executable not found. Install Docker and ensure it is on PATH.",
                     "returncode": 127,
                     "timeout": timeout,
-                }
+                })
             except subprocess.TimeoutExpired as exc:
-                return {
+                return json.dumps({
                     "language": language,
                     "image": spec["image"],
                     "stdout": self.decode_process_output(exc.stdout),
                     "stderr": f"Docker sandbox timed out after {timeout} seconds.",
                     "returncode": 124,
                     "timeout": timeout,
-                }
+                })
 
     def _execute_code_in_docker_tool(self, tool_input: Dict[str, Any]) -> str:
         code = str(tool_input.get("code", ""))

@@ -10,3 +10,4 @@
 2026-05-30 17:04:15,705 - Rate limit server unreachable (The read operation timed out)
 2026-05-31 17:38:53,227 - Rate limit: ingest_paths_knowledge — 1/15 used this month (14 remaining) [free plan, monthly]
 2026-05-31 17:42:28,032 - Rate limit: ingest_paths_knowledge — 2/15 used this month (13 remaining) [free plan, monthly]
+2026-06-01 21:31:36,417 - Rate limit: search_stuff — 1/10 used this month (9 remaining) [free plan, monthly]
