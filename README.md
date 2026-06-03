@@ -80,7 +80,8 @@ claw <chat model> <embedding modal>
 claw doctor
 claw languages
 claw ingest .
-claw graph "tree_sitter imports" --depth 2<img width="1352" height="651" alt="Screenshot 2026-06-03 at 11 30 40" src="https://github.com/user-attachments/assets/75ca5440-47bc-457e-8fdf-f67967645b62" />claw search "where is graph reranking implemented?" --top-k 5
+claw graph "tree_sitter imports" 
+claw search "where is graph reranking implemented?" --top-k 5
 claw chat
 ```
 - This is a screenshot of claw --help with all the commands displayed
