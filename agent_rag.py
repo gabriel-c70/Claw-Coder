@@ -1546,7 +1546,7 @@ class Agent:
                 })
         else:
             for p in path.iterdir():
-                files.apppend({
+                files.append({
                     "path": str(p),
                     "type": "directory" if p.is_dir() else "file"
                 })
@@ -2023,19 +2023,19 @@ class Agent:
                 text=True,
                 timeout=max(1, timeout),
             )
-            return json.dumps({
+            return {
                 "command": command,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "returncode": result.returncode,
-            })
+            }
         except subprocess.TimeoutExpired as exc:
-            return json.dumps({
+            return {
                 "command": command,
                 "stdout": self.decode_process_output(exc.stdout),
                 "stderr": f"Command timed out after {timeout} seconds.",
                 "returncode": 124,
-            })
+            }
 
     def _run_terminal_tool(self, tool_input: Dict[str, Any]) -> str:
         command = str(tool_input.get("command", "")).strip()
@@ -2521,8 +2521,9 @@ class Agent:
         language = str(tool_input.get("language", "python")).strip().lower() or "python"
         timeout = int(tool_input.get("timeout", 10))
         result = self.execute_code_in_docker(code=code, language=language, timeout=timeout)
-        status = "ok" if result.get("returncode") == 0 else "error"
-        return json.dumps({"status": status, "result": result}, ensure_ascii=False)
+        result_data = json.loads(result) if isinstance(result, str) else result
+        status = "ok" if result_data.get("returncode") == 0 else "error"
+        return json.dumps({"status": status, "result": result_data}, ensure_ascii=False)
 
     def _manage_memory_tool(self, tool_input: Dict[str, Any]) -> str:
         action = str(tool_input.get("action", "list")).strip().lower() or "list"
