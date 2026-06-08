@@ -57,11 +57,6 @@ npm install -g .
 claw setup
 ```
 ---
-or:
-```bash
-brew tap gabriel-c70/claw-coder
-brew tap gabriel-c70/claw-coder && brew install claw-coder
-```
 For development, use a symlink instead:
 
 ```bash
