@@ -1,0 +1,625 @@
+#!/usr/bin/env node
+"use strict";
+
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+const { login, loadSession, clearSession } = require("./auth");
+
+const packageRoot = path.resolve(__dirname, "..");
+const pythonAgent = path.join(packageRoot, "agent_rag.py");
+const requirementsFile = path.join(packageRoot, "requirements.txt");
+
+function loadEnvFile() {
+  const envFile = path.join(packageRoot, ".env");
+  if (!fs.existsSync(envFile)) return;
+  for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const [key, ...rest] = trimmed.split("=");
+    if (key && rest.length && !process.env[key.trim()]) {
+      process.env[key.trim()] = rest.join("=").trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+}
+
+loadEnvFile();
+
+const HELP = `
+Claw Coder
+
+Usage:
+  claw <command> [options]
+
+Commands:
+  chat                         Start the interactive agent
+  ingest <paths...>            Ingest files/directories into graph + vector RAG
+  ingest-code <file>           Ingest one source file
+  ingest-pdf [file]            Ingest a PDF
+  search <query>               Search vector RAG with graph reranking
+  graph <query>                Search the knowledge graph only
+  summary                      Show graph node/edge counts
+  languages                    Show Tree-sitter language support
+  setup                        Install Python dependencies for Claw Coder
+  doctor                       Check local Node/Python/Ollama setup
+  usage                        Show this month's cloud tool usage
+  credits                      Show paid credit balance
+  buy                          Subscribe for $30/month credits
+  topup                        Buy extra pay-as-you-go credits
+
+Common options:
+  --top-k <n>                  Number of results to return
+  --depth <n>                  Graph traversal depth for graph search
+  --graph <file>               Knowledge graph JSON path
+  --db <dir>                   ChromaDB directory
+  --collection <name>          ChromaDB collection
+  --model <name>               Ollama chat model
+  --embedding-model <name>     Ollama embedding model
+
+Examples:
+  claw setup
+  claw doctor
+  claw ingest .
+  claw graph "imports tree_sitter" --depth 2
+  claw search "where is reranking implemented?" --top-k 5
+  claw chat
+  claw <model>                 Start chat with any model
+  claw qwen2.5-coder:7b        Start chat with qwen2.5-coder:7b
+  claw embedding <model>       Start a model for the embeddings part of the agent
+  login [provider]             Log in via OAuth (default: github)
+  logout                       Clear saved session
+  whoami                       Show current logged-in user
+  usage                        Show usage and remaining free allowance
+  credits                      Show paid credit balance
+  buy                          Open checkout for the $30/month plan
+  topup                        Open checkout for extra credits
+
+`;
+
+function printHelp() {
+  console.log(HELP.trimStart());
+}
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || process.cwd(),
+    stdio: options.stdio || "inherit",
+    env: process.env,
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    return { status: 1, error: result.error.message, stdout: result.stdout || "", stderr: result.stderr || "" };
+  }
+  return {
+    status: typeof result.status === "number" ? result.status : 1,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+  };
+}
+
+function commandExists(command, args = ["--version"]) {
+  const result = run(command, args, { stdio: "pipe" });
+  return result.status === 0;
+}
+
+function findPython() {
+  if (process.env.CLAW_PYTHON) {
+    return process.env.CLAW_PYTHON;
+  }
+  if (commandExists("python3")) {
+    return "python3";
+  }
+  if (commandExists("python")) {
+    return "python";
+  }
+  return null;
+}
+
+function readOption(args, names, fallback = null) {
+  for (let index = 0; index < args.length; index += 1) {
+    if (names.includes(args[index])) {
+      return args[index + 1] || fallback;
+    }
+    for (const name of names) {
+      if (args[index].startsWith(`${name}=`)) {
+        return args[index].slice(name.length + 1);
+      }
+    }
+  }
+  return fallback;
+}
+
+function collectGlobalOptions(args) {
+  const output = [];
+  const mappings = [
+    [["--model"], "--model"],
+    [["--embedding-model"], "--embedding-model"],
+    [["--db", "--db-path"], "--db-path"],
+    [["--collection"], "--collection"],
+    [["--graph", "--knowledge-graph-path"], "--knowledge-graph-path"],
+  ];
+
+  for (const [aliases, target] of mappings) {
+    const value = readOption(args, aliases);
+    if (value) {
+      output.push(target, value);
+    }
+  }
+  return output;
+}
+
+function stripKnownOptions(args) {
+  const optionsWithValues = new Set([
+    "--model",
+    "--embedding-model",
+    "--db",
+    "--db-path",
+    "--collection",
+    "--graph",
+    "--knowledge-graph-path",
+    "--top-k",
+    "--depth",
+    "--language",
+  ]);
+  const flags = new Set(["--no-recursive", "--no-vector-rag", "--no-hybrid-rerank"]);
+  const cleaned = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const equalsName = arg.includes("=") ? arg.split("=")[0] : null;
+    if (optionsWithValues.has(arg)) {
+      index += 1;
+      continue;
+    }
+    if (equalsName && optionsWithValues.has(equalsName)) {
+      continue;
+    }
+    if (flags.has(arg)) {
+      continue;
+    }
+    cleaned.push(arg);
+  }
+
+  return cleaned;
+}
+
+function runAgent(agentArgs) {
+  const python = findPython();
+  if (!python) {
+    console.error("Python was not found. Install Python 3 or set CLAW_PYTHON=/path/to/python.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const result = run(python, [pythonAgent, ...agentArgs], { cwd: process.cwd() });
+  process.exitCode = result.status;
+}
+
+function runSetup() {
+  const python = findPython();
+  if (!python) {
+    console.error("Python was not found. Install Python 3 or set CLAW_PYTHON=/path/to/python.");
+    process.exitCode = 1;
+    return;
+  }
+  if (!fs.existsSync(requirementsFile)) {
+    console.error(`Missing requirements file: ${requirementsFile}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log("Installing Python dependencies...");
+  const result = run(python, ["-m", "pip", "install", "-r", requirementsFile], { cwd: packageRoot });
+  process.exitCode = result.status;
+}
+
+function runDoctor() {
+  const python = findPython();
+  const checks = [
+    ["Node.js", true, process.version],
+    ["Python", Boolean(python), python || "not found"],
+    ["Ollama", commandExists("ollama"), commandExists("ollama") ? "found" : "not found"],
+    ["agent_rag.py", fs.existsSync(pythonAgent), pythonAgent],
+    ["requirements.txt", fs.existsSync(requirementsFile), requirementsFile],
+  ];
+
+  for (const [name, ok, detail] of checks) {
+    console.log(`${ok ? "OK " : "NO "} ${name}: ${detail}`);
+  }
+
+  if (python) {
+    const importCheck = run(
+      python,
+      [
+        "-c",
+        "import ollama, chromadb, ddgs, pypdf, tree_sitter; print('OK  Python packages: installed')",
+      ],
+      { cwd: packageRoot, stdio: "pipe" },
+    );
+    if (importCheck.status === 0) {
+      process.stdout.write(importCheck.stdout);
+    } else {
+      console.log("NO  Python packages: missing; run `claw setup`");
+    }
+  }
+}
+
+function getApiUrl() {
+  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder-f95s.onrender.com").replace(/\/$/, "");
+}
+
+async function apiFetch(pathname, session, options = {}) {
+  const timeoutMs = Number(process.env.RATE_LIMIT_TIMEOUT_MS || 45000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${getApiUrl()}${pathname}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { detail: text };
+    }
+    if (!response.ok) {
+      const detail = data.detail || data.error || data;
+      const message = typeof detail === "string" ? detail : detail.message || JSON.stringify(detail);
+      throw new Error(message);
+    }
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function requireSession() {
+  const session = loadSession();
+  if (!session) {
+    throw new Error("Not logged in. Run: claw login");
+  }
+  return session;
+}
+
+function buildAgentArgs(command, args) {
+  const globalOptions = collectGlobalOptions(args);
+  const topK = readOption(args, ["--top-k"]);
+  const depth = readOption(args, ["--depth"]);
+  const language = readOption(args, ["--language"]);
+  const cleaned = stripKnownOptions(args);
+  const hasFlag = (flag) => args.includes(flag);
+
+  if (command === "chat") {
+    return [...globalOptions, "chat"];
+  }
+  if (command === "languages") {
+    return [...globalOptions, "languages"];
+  }
+  if (command === "summary" || command === "graph-summary") {
+    return [...globalOptions, "graph-summary"];
+  }
+  if (command === "ingest") {
+    if (cleaned.length === 0) {
+      throw new Error("ingest needs at least one file or directory path.");
+    }
+    return [
+      ...globalOptions,
+      "ingest-paths",
+      ...cleaned,
+      ...(hasFlag("--no-recursive") ? ["--no-recursive"] : []),
+      ...(hasFlag("--no-vector-rag") ? ["--no-vector-rag"] : []),
+    ];
+  }
+  if (command === "ingest-code") {
+    if (cleaned.length !== 1) {
+      throw new Error("ingest-code needs exactly one file path.");
+    }
+    return [...globalOptions, "ingest-code", cleaned[0], ...(language ? ["--language", language] : [])];
+  }
+  if (command === "ingest-pdf") {
+    return [...globalOptions, "ingest-pdf", ...cleaned.slice(0, 1)];
+  }
+  if (command === "search") {
+    const query = cleaned.join(" ").trim();
+    if (!query) {
+      throw new Error("search needs a query.");
+    }
+    return [
+      ...globalOptions,
+      "search-kb",
+      query,
+      ...(topK ? ["--top-k", topK] : []),
+      ...(hasFlag("--no-hybrid-rerank") ? ["--no-hybrid-rerank"] : []),
+    ];
+  }
+  if (command === "graph") {
+    const query = cleaned.join(" ").trim();
+    if (!query) {
+      throw new Error("graph needs a query.");
+    }
+    return [...globalOptions, "search-graph", query, ...(topK ? ["--top-k", topK] : []), ...(depth ? ["--depth", depth] : [])];
+  }
+  if (command === "raw") {
+    return cleaned;
+  }
+
+  throw new Error(`Unknown command: ${command}`);
+}
+function main() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+  const commandArgs = args.slice(1);
+
+  if (!command || command === "--help" || command === "-h" || command === "help") {
+    printHelp();
+    return;
+  }
+  if (command === "--version" || command === "-v") {
+    const pkg = require(path.join(packageRoot, "package.json"));
+    console.log(pkg.version);
+    return;
+  }
+  if (command === "setup") {
+    runSetup();
+    return;
+  }
+  if (command === "doctor") {
+    runDoctor();
+    return;
+  }
+  if (command === "embedding") {
+    const embeddingModel = commandArgs[0];
+  if (!embeddingModel) {
+        console.error("Usage: claw embedding <model-name>");
+        console.error("Example: claw embedding nomic-embed-text");
+        process.exitCode = 1;
+        return;
+  }
+  runAgent(["--embedding-model", embeddingModel, "chat"]);
+  return;
+}
+  // --- paste this block right after the "doctor" check ---
+
+  if (command === "login") {
+    const provider = commandArgs[0] || "github";
+    login(provider)
+        .then((session) => {
+        console.log(`\nLogged in as ${session.user?.email}`);
+        console.log("Run `claw chat` or any claw command to start.");
+        })
+        .catch((err) => {
+        console.error(`Login failed: ${err.message}`);
+        process.exitCode = 1;
+        });
+    return;
+}
+
+  if (command === "logout") {
+    clearSession();
+    console.log("Logged out. Run `claw login` to log in again.");
+    return;
+}
+
+  if (command === "whoami") {
+    const session = loadSession();
+  if (!session) {
+    console.log("Not logged in. Run: claw login");
+  } else {
+        console.log(`Logged in as: ${session.user?.email}`);
+        const exp = new Date(session.expires_at * 1000).toLocaleString();
+        console.log(`Session expires: ${exp}`);
+    }
+  return;
+    }
+   if (command === "usage") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+
+    apiFetch("/usage", session)
+      .then((data) => {
+        const plan = data.plan || "free";
+        console.log(`\n  Claw Coder usage  ${data.month}  ${plan.toUpperCase()} plan`);
+        console.log(`  Paid credits: ${data.credits || 0}\n`);
+
+        const usage = data.usage || {};
+        const tools = Object.keys(usage).sort();
+
+        if (tools.length === 0) {
+          console.log("  No tools used this month yet.\n");
+          return;
+        }
+
+        // column widths
+        const nameWidth = 32;
+        const barWidth  = 12;
+
+        console.log(
+          `  ${"Tool".padEnd(nameWidth)} ${"Usage".padEnd(barWidth)}  Count     Remaining`
+        );
+        console.log("  " + "─".repeat(nameWidth + barWidth + 22));
+
+        for (const tool of tools) {
+          const { used, limit, remaining } = usage[tool];
+          const isPro = limit >= 999999;
+          const pct   = isPro ? 0 : Math.min(1, used / limit);
+          const filled = Math.round(pct * barWidth);
+          const bar   = isPro
+            ? "∞ unlimited  "
+            : "█".repeat(filled).padEnd(barWidth, "░");
+
+          const countStr    = isPro ? `${used}` : `${used}/${limit}`;
+          const remainStr   = isPro ? "∞" : `${remaining} left`;
+
+          // warn if over 80%
+          const warn = !isPro && pct >= 0.8 ? " ⚠" : "";
+
+          console.log(
+            `  ${tool.padEnd(nameWidth)} ${bar}  ${countStr.padEnd(10)}${remainStr}${warn}`
+          );
+        }
+
+        if (plan === "free") {
+          console.log("\n  Free allowance is used first. After that, paid credits are used.");
+          console.log("  Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
+        } else {
+          console.log("\n  All tools unlimited on Pro plan.\n");
+        }
+      })
+      .catch((err) => {
+        console.error(`Could not fetch usage: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === "credits") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    apiFetch("/plan", session)
+      .then((data) => {
+        console.log(`\n  Plan: ${String(data.plan || "free").toUpperCase()}`);
+        console.log(`  Paid credits: ${data.credits || 0}`);
+        console.log("  Limited tools use free monthly allowance first, then paid credits.\n");
+      })
+      .catch((err) => {
+        console.error(`Could not fetch credits: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === "buy") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("Creating checkout for the $30/month Claw Coder plan...");
+    apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({}) })
+      .then((data) => {
+        if (!data.checkout_url) {
+          throw new Error("The billing server did not return a checkout URL.");
+        }
+        console.log(`\n  Monthly credits: ${data.credits}`);
+        console.log(`  Checkout: ${data.checkout_url}\n`);
+        const opener = process.platform === "darwin" ? "open"
+          : process.platform === "win32" ? "start"
+          : "xdg-open";
+        try {
+          spawnSync(opener, [data.checkout_url], {
+            stdio: "ignore",
+            shell: process.platform === "win32",
+          });
+        } catch {}
+      })
+      .catch((err) => {
+        console.error(`Could not create checkout: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === "topup") {
+    let session;
+    try {
+      session = requireSession();
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("Creating checkout for extra Claw Coder credits...");
+    apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({ mode: "topup" }) })
+      .then((data) => {
+        if (!data.checkout_url) {
+          throw new Error("The billing server did not return a checkout URL.");
+        }
+        console.log(`\n  Extra credits: ${data.credits}`);
+        console.log(`  Checkout: ${data.checkout_url}\n`);
+        const opener = process.platform === "darwin" ? "open"
+          : process.platform === "win32" ? "start"
+          : "xdg-open";
+        try {
+          spawnSync(opener, [data.checkout_url], {
+            stdio: "ignore",
+            shell: process.platform === "win32",
+          });
+        } catch {}
+      })
+      .catch((err) => {
+        console.error(`Could not create top-up checkout: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+// ── AUTH GATE ──────────────────────────────────────────────
+// skip auth for setup/doctor/help (they don't touch the agent)
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup"]);
+  if (!NO_AUTH_COMMANDS.has(command)) {
+    const session = loadSession();
+  if (!session) {
+    console.error("\nNot logged in. Run: claw login\n");
+    process.exitCode = 1;
+    return;
+  }
+  // inject user identity into env so python can read it if needed
+  process.env.CLAW_USER_EMAIL = session.user?.email || "";
+  process.env.CLAW_USER_ID    = session.user?.id    || "";
+}
+// ──────────────────────────────────────────────────────────
+  // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
+  const KNOWN_COMMANDS = new Set([
+    "chat", "ingest", "ingest-code", "ingest-pdf", "search",
+    "graph", "summary", "graph-summary", "languages",
+    "setup", "doctor", "raw", "embedding","usage", "credits", "buy", "topup"
+  ]);
+
+  if (!KNOWN_COMMANDS.has(command)) {
+  const embeddingModel = commandArgs[0];  // optional second arg
+  const agentArgs = ["--model", command];
+  if (embeddingModel && !embeddingModel.startsWith("--")) {
+    agentArgs.push("--embedding-model", embeddingModel);
+  }
+  agentArgs.push("chat");
+  runAgent(agentArgs);
+  return;
+}
+  try {
+    runAgent(buildAgentArgs(command, commandArgs));
+  } catch (error) {
+    console.error(error.message);
+    console.error("Run `claw --help` for usage.");
+    process.exitCode = 1;
+  }
+}
+
+
+main();
