@@ -53,7 +53,7 @@
 From this directory:
 
 ```bash
-npm install -g .
+npm install -g claw-coder
 claw setup
 ```
 ---

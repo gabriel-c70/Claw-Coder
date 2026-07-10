@@ -1,7 +1,7 @@
 {
   "name": "claw-coder",
   "version": "0.1.0",
-  "description": "A local Tree-sitter knowledge graph and hybrid RAG CLI agent.",
+  "description": "Claw coder is a local first AI agent that turns local coding small LLMs into powerful AI agents that actually work",
   "type": "commonjs",
   "bin": {
     "claw": "./bin/claw-coder.js",
