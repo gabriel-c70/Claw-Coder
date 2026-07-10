@@ -6,4 +6,5 @@ __pycache__/
 .DS_Store
 agent_rag_chroma_db/
 chromadb/
+.env
 stuff.md
