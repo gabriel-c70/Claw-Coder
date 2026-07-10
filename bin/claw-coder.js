@@ -246,7 +246,7 @@ function runDoctor() {
 }
 
 function getApiUrl() {
-  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder-f95s.onrender.com").replace(/\/$/, "");
+  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder2.onrender.com").replace(/\/$/, "");
 }
 
 async function apiFetch(pathname, session, options = {}) {
