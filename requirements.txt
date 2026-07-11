@@ -1,4 +1,5 @@
 ollama
+tree-sitter>=0.23
 tree-sitter-python
 tree-sitter-css
 tree-sitter-rust
@@ -9,13 +10,13 @@ tree-sitter-json
 tree-sitter-javascript
 tree-sitter-html
 
-chromadb
+chromadb==0.5.23; python_version < "3.13"
 ddgs
 pypdf
 uvicorn
 fastapi
-dataclasses
 python-dotenv
 supabase
 tavily-python
 certifi
+rich>=13.7

@@ -102,43 +102,45 @@ def verify_token(authorization: str) -> str:
         pass
 
     # fall back — verify with GitHub API directly
-        # fall back — verify with GitHub API directly
+    try:
+        import urllib.request as _req
+        import ssl
+
+        # fix Mac SSL certificate issue
+        ssl_context = ssl.create_default_context()
         try:
-            import urllib.request as _req
-            import ssl
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            pass
 
-            # fix Mac SSL certificate issue
-            ssl_context = ssl.create_default_context()
-            try:
-                import certifi
-                ssl_context = ssl.create_default_context(cafile=certifi.where())
-            except ImportError:
-                pass
+        req = _req.Request(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+        with _req.urlopen(req, timeout=10, context=ssl_context) as resp:
+            user = json.loads(resp.read().decode("utf-8"))
+            github_id = user.get("id")
+            if not github_id:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            # find matching Supabase user by github_id in user_metadata
+            users_resp = supabase.auth.admin.list_users()
+            for u in users_resp:
+                meta = u.user_metadata or {}
+                if str(meta.get("github_id")) == str(github_id):
+                    return u.id
+            # no Supabase user matched — use github_{id} as fallback user key
+            return f"github_{github_id}"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {exc}")
 
-            req = _req.Request(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                },
-            )
-            with _req.urlopen(req, timeout=10, context=ssl_context) as resp:
-                user = json.loads(resp.read().decode("utf-8"))
-                github_id = user.get("id")
-                if not github_id:
-                    raise HTTPException(status_code=401, detail="Invalid token")
-                # find matching Supabase user by github_id in user_metadata
-                users_resp = supabase.auth.admin.list_users()
-                for u in users_resp:
-                    meta = u.user_metadata or {}
-                    if str(meta.get("github_id")) == str(github_id):
-                        return u.id
-                # no Supabase user matched — use github_{id} as fallback user key
-                return f"github_{github_id}"
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail=f"Token verification failed: {exc}")
+    raise HTTPException(status_code=401, detail="Invalid token")
+
 def get_user_plan(user_id: str) -> str:
     """Check if user has an active pro subscription."""
     try:
