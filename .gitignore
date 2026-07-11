@@ -6,4 +6,9 @@ __pycache__/
 .DS_Store
 agent_rag_chroma_db/
 chromadb/
+<<<<<<< HEAD
+=======
+.env
+.env.*
+>>>>>>> b3167cd (fixed issues)
 stuff.md
