@@ -30,12 +30,10 @@
     "agent_rag.py",
     "agent_sever.py",
     "agent_knowledge.py",
+    "claw_ui.py",
     "supabase",
     "requirements.txt",
     "README.md",
     "LICENSE"
-  ],
-  "dependencies": {
-    "claw-coder": "^0.1.1"
-  }
+  ]
 }

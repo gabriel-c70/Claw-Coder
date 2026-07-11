@@ -39,7 +39,7 @@ import sys
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Any, Iterable, Optional, Tuple
+from typing import List, Dict, Any, Iterable, Optional, Tuple, Set
 from urllib.parse import urlparse
 from tavily import TavilyClient
 import shlex
@@ -52,10 +52,27 @@ from agent_knowledge import (
     iter_supported_files as iter_knowledge_files,
     tree_sitter_available_languages as graph_tree_sitter_languages,
 )
+from claw_ui import (
+    ChatSpinner,
+    conversation_title_from_message,
+    list_ollama_models,
+    print_assistant_response,
+    print_assistant_start,
+    print_banner,
+    print_error,
+    print_goodbye,
+    print_models_table,
+    print_status,
+    print_user_prompt,
+    read_user_input,
+    resolve_chat_model,
+    set_terminal_title,
+    validate_ollama_model,
+)
 
 load_dotenv()
 
-RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-f95s.onrender.com")
+RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder2.onrender.com")
 RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "30"))
 
 logging.basicConfig(
@@ -73,10 +90,13 @@ DEFAULT_DB_PATH = "agent_rag_chroma_db"
 DEFAULT_COLLECTION = "agent_mixed_knowledge"
 DEFAULT_KNOWLEDGE_GRAPH_PATH = DEFAULT_GRAPH_PATH
 DEFAULT_MEMORY_PATH = "agent_memory.json"
-DEFAULT_PDF = Path(__file__).resolve().parent /"data" / "2509.24435v1.pdf" # you can place any document you desire for it to ingest then run python <file> ingest
+DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
 
-SUPPORTED_LANGUAGES = ["python","javascript","typescript","tsx","html","css","json","yaml","toml","xml","bash","shell","c","cpp"
-                       "java","kotlin","go","rust","ruby","php","lua","r","swift","dart","scala","haskell","perl","elixir","clojure"]
+SUPPORTED_LANGUAGES = [
+    "python", "javascript", "typescript", "tsx", "html", "css", "json", "yaml", "toml", "xml",
+    "bash", "shell", "c", "cpp", "java", "kotlin", "go", "rust", "ruby", "php", "lua", "r",
+    "swift", "dart", "scala", "haskell", "perl", "elixir", "clojure",
+]
 test_languages = {
     "python", "javascript", "typescript", "node", "go", "rust", "java", "ruby", "php", "csharp", "c", "cpp", "swift", "kotlin", "scala", "elixir", "lua", "perl", "r", "dart", "flutter", "ocaml",
     "clojure", "erlang", "crystal", "julia", "zig", "nim", "fortran", "bash", "shell"
@@ -250,9 +270,19 @@ def load_pdf(path: str) -> List[Document]:
     pdf_path = Path(path).expanduser().resolve()
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError(f"Not a PDF file: {pdf_path}")
 
     PdfReader = require_pdf_reader()
     pdf_reader = PdfReader(str(pdf_path))
+    if getattr(pdf_reader, "is_encrypted", False):
+        try:
+            pdf_reader.decrypt("")
+        except Exception as exc:
+            raise RuntimeError(
+                f"PDF is encrypted and could not be opened: {pdf_path}"
+            ) from exc
+
     docs: List[Document] = []
     for index, page in enumerate(pdf_reader.pages, start=1):
         text = (page.extract_text() or "").strip()
@@ -263,7 +293,75 @@ def load_pdf(path: str) -> List[Document]:
                     metadata={"source": str(pdf_path), "page": index, "kind": "pdf"},
                 )
             )
+
+    if not docs:
+        raise RuntimeError(
+            f"No extractable text found in {pdf_path}. "
+            "Scanned/image-only PDFs need OCR before ingestion."
+        )
     return docs
+
+
+def load_text_document(path: str) -> List[Document]:
+    doc_path = Path(path).expanduser().resolve()
+    if not doc_path.exists():
+        raise FileNotFoundError(f"Document not found: {doc_path}")
+    if doc_path.suffix.lower() not in {".txt", ".md", ".markdown"}:
+        raise ValueError(f"Unsupported text document type: {doc_path.suffix}")
+
+    text = doc_path.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        raise RuntimeError(f"Document is empty: {doc_path}")
+
+    return [
+        Document(
+            page_content=text,
+            metadata={
+                "source": str(doc_path),
+                "page": 1,
+                "kind": "document",
+                "format": doc_path.suffix.lower().lstrip("."),
+            },
+        )
+    ]
+
+
+def load_document(path: str) -> List[Document]:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf":
+        return load_pdf(path)
+    if suffix in {".txt", ".md", ".markdown"}:
+        return load_text_document(path)
+    raise ValueError(
+        f"Unsupported document format '{suffix}'. Supported: .pdf, .txt, .md"
+    )
+
+
+def iter_document_files(
+    paths: Iterable[str],
+    recursive: bool = True,
+) -> List[Path]:
+    files: List[Path] = []
+    seen: Set[str] = set()
+    for raw_path in paths:
+        path = Path(raw_path).expanduser().resolve()
+        if not path.exists():
+            continue
+        candidates: Iterable[Path]
+        if path.is_dir():
+            walker = path.rglob("*") if recursive else path.glob("*")
+            candidates = (candidate for candidate in walker if candidate.is_file())
+        else:
+            candidates = [path]
+        for candidate in candidates:
+            if candidate.suffix.lower() not in DOCUMENT_EXTENSIONS:
+                continue
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(candidate)
+    return sorted(files)
 
 
 def split_documents(
@@ -529,10 +627,13 @@ class MixedRAGStore:
         )
         return len(documents)
 
-    def ingest_pdf(self, path: str, chunk_size: int = 1200, chunk_overlap: int = 250) -> int:
-        pages = load_pdf(path)
+    def ingest_document(self, path: str, chunk_size: int = 1200, chunk_overlap: int = 250) -> int:
+        pages = load_document(path)
         chunks = split_documents(pages, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         return self.add_documents(chunks)
+
+    def ingest_pdf(self, path: str, chunk_size: int = 1200, chunk_overlap: int = 250) -> int:
+        return self.ingest_document(path, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     def ingest_code(self, path: str, language: Optional[str] = None) -> int:
         chunks = tree_sitter_code_chunks(path, language=language)
@@ -881,7 +982,7 @@ class Agent:
             "type": "function",
             "function": {
                 "name": "ingest_pdf_knowledge",
-                "description": "Ingest a pdf file, book, document, .pdf or .txt files into the pdf RAG",
+                "description": "Ingest a PDF or text document (.pdf, .txt, .md) into document RAG for reasoning",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1654,7 +1755,9 @@ class Agent:
 
         graph_result = self.knowledge_graph().ingest_paths(paths, recursive=recursive)
         vector_added = 0
+        document_added = 0
         vector_errors: List[Dict[str, str]] = []
+        document_errors: List[Dict[str, str]] = []
         if ingest_vector_rag:
             for file_path in iter_knowledge_files(paths, recursive=recursive):
                 language = infer_language(str(file_path))
@@ -1664,13 +1767,20 @@ class Agent:
                     vector_added += self.rag_store().ingest_code(str(file_path), language=language)
                 except Exception as exc:
                     vector_errors.append({"path": str(file_path), "error": str(exc)})
+            for doc_path in iter_document_files(paths, recursive=recursive):
+                try:
+                    document_added += self.rag_store().ingest_document(str(doc_path))
+                except Exception as exc:
+                    document_errors.append({"path": str(doc_path), "error": str(exc)})
 
         return json.dumps(
             {
                 "status": "ok",
                 "graph": graph_result,
                 "vector_chunks_added": vector_added,
+                "document_chunks_added": document_added,
                 "vector_errors": vector_errors,
+                "document_errors": document_errors,
             },
             ensure_ascii=False,
         )
@@ -1699,7 +1809,11 @@ class Agent:
         if not path:
             return json.dumps({"status": "error", "error": "Missing path"})
 
-        count = self.rag_store().ingest_pdf(path)
+        try:
+            count = self.rag_store().ingest_document(path)
+        except Exception as exc:
+            return json.dumps({"status": "error", "path": path, "error": str(exc)})
+
         return json.dumps(
             {"status": "ok", "path": path, "chunks_added": count},
             ensure_ascii=False,
@@ -2426,13 +2540,13 @@ class Agent:
     def execute_code_in_docker(self, code: str, language: str = "python", timeout: int = 10) -> Dict[str, Any]:
         if not code.strip():
             return {"error": "Missing code", "returncode": 2}
-        if len(code) > 100_000_00:
+        if len(code) > 10_000_000:
             return json.dumps({"error": "Code is too large; maximum size is 10,000,000 characters.", "returncode": 2})
 
         spec = self.docker_language_spec(language)
         timeout = min(max(1, timeout), 60)
 
-        with (tempfile.TemporaryDirectory(prefix="claw-coder-sandbox-") as temp_dir):
+        with tempfile.TemporaryDirectory(prefix="claw-coder-sandbox-") as temp_dir:
             host_path = Path(temp_dir)
             code_path = host_path / spec["filename"]
             code_path.write_text(code, encoding="utf-8")
@@ -2637,7 +2751,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory-path", default=DEFAULT_MEMORY_PATH)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("chat")
+    chat = subparsers.add_parser("chat")
+    chat.add_argument("--pdf", action="append", default=[], dest="pdf_paths")
+    chat.add_argument("--document", action="append", default=[], dest="document_paths")
+    subparsers.add_parser("models")
     subparsers.add_parser("languages")
 
     code_chunks = subparsers.add_parser("code-chunks")
@@ -2654,7 +2771,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_paths.add_argument("--no-vector-rag", action="store_true")
 
     ingest_pdf = subparsers.add_parser("ingest-pdf")
-    ingest_pdf.add_argument("path", nargs="?", default=str(DEFAULT_PDF))
+    ingest_pdf.add_argument("path", help="Path to a .pdf, .txt, or .md file")
 
     search_kb = subparsers.add_parser("search-kb")
     search_kb.add_argument("query")
@@ -2673,6 +2790,87 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def ingest_session_documents(agent: Agent, paths: Iterable[str]) -> None:
+    for raw_path in paths:
+        path = str(raw_path).strip()
+        if not path:
+            continue
+        print_status(f"Ingesting document: {path}")
+        result = agent.execute_tool("ingest_pdf_knowledge", {"path": path})
+        try:
+            payload = json.loads(result)
+            if payload.get("status") == "ok":
+                print_status(f"  added {payload.get('chunks_added', 0)} chunks")
+            else:
+                print_error(payload.get("error", result))
+        except json.JSONDecodeError:
+            print_status(result)
+
+
+def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = None) -> None:
+    set_terminal_title("Claw Coder")
+    print_banner(agent.model, agent.embedding_model)
+
+    docs = [path for path in (document_paths or []) if str(path).strip()]
+    if docs:
+        ingest_session_documents(agent, docs)
+
+    session_title_set = False
+    try:
+        while True:
+            print_user_prompt()
+            user_input = read_user_input()
+            if not user_input:
+                continue
+            if user_input.lower() in {"exit", "quit", "/exit", "/quit"}:
+                break
+            if user_input.lower() in {"/help", "help"}:
+                print_status("Commands: /models  /pdf <file>  /title  exit")
+                continue
+            if user_input.lower() == "/models":
+                print_models_table(list_ollama_models())
+                continue
+            if user_input.lower() == "/title":
+                title = conversation_title_from_message(
+                    next(
+                        (
+                            message.get("content", "")
+                            for message in reversed(agent.messages)
+                            if message.get("role") == "user"
+                        ),
+                        "Claw Coder",
+                    )
+                )
+                set_terminal_title(title)
+                print_status(title)
+                continue
+            if user_input.lower().startswith("/pdf ") or user_input.lower().startswith("/document "):
+                doc_path = user_input.split(" ", 1)[1].strip()
+                ingest_session_documents(agent, [doc_path])
+                continue
+
+            if not session_title_set:
+                set_terminal_title(conversation_title_from_message(user_input))
+                session_title_set = True
+
+            print_assistant_start()
+            with ChatSpinner("Thinking…"):
+                response = agent.chat(user_input)
+            print_assistant_response(response)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print_goodbye()
+
+
+def resolve_model_for_cli(explicit: Optional[str], interactive: bool = True) -> str:
+    if explicit and explicit.strip():
+        return validate_ollama_model(explicit.strip())
+    if interactive:
+        return resolve_chat_model()
+    raise ValueError("No model specified. Use: claw <model> chat  or  claw chat --model <model>")
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -2681,12 +2879,21 @@ def main() -> None:
         print_json({"rag_tree_sitter": available_languages(), "graph_tree_sitter": graph_tree_sitter_languages()})
         return
 
+    if args.command == "models":
+        print_models_table(list_ollama_models())
+        return
+
     if args.command == "code-chunks":
         preview_code_chunks(args.path, language=args.language)
         return
-    model = args.model or input("Enter model name (e.g. mistral, llama3.2:3b): ").strip()
-    if not model:
-        print("Error: --model is required. Example: claw mistral")
+
+    try:
+        if args.command == "chat":
+            model = resolve_model_for_cli(args.model, interactive=not bool(args.model))
+        else:
+            model = args.model or os.getenv("CLAW_MODEL") or os.getenv("OLLAMA_MODEL") or "llama3.2:3b"
+    except (ValueError, RuntimeError) as exc:
+        print_error(str(exc))
         return
     agent = Agent(
         model=model,
@@ -2742,28 +2949,9 @@ def main() -> None:
         print(agent.execute_tool("manage_memory", {"action": "list", "limit": args.limit}))
         return
     if args.command == "chat":
-        print("""
-|===================================================|
-|   |=============|                                 |
-|   |Claw-Coder ✌️|                                 |
-|   |=============|                                 |
-|   Type = {                                        |
-|       'exit': 'quit'                              |
-|   }   <- Say bye to claw                          |
-|                                                   |                                 
-|===================================================|
-        """)
-        try:
-            while True:
-                user_input = input("Type anything to interact with Claw-Coder: ")
-                print("=============================================================================================================================================================")
-                if user_input.lower() in {"exit", "quit"}:
-                    break
-
-                print(f"\nClaw-Coder: {agent.chat(user_input)}\n")
-                print("=============================================================================================================================================================")
-        except KeyboardInterrupt:
-            print("\nclaw chatThank you for using claw-coder you can come back to chat any time: `claw chat`")
+        session_docs = list(getattr(args, "pdf_paths", []) or []) + list(getattr(args, "document_paths", []) or [])
+        run_interactive_chat(agent, document_paths=session_docs)
+        return
 
 
 

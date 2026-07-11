@@ -32,10 +32,11 @@ Usage:
   claw <command> [options]
 
 Commands:
-  chat                         Start the interactive agent
-  ingest <paths...>            Ingest files/directories into graph + vector RAG
-  ingest-code <file>           Ingest one source file
-  ingest-pdf [file]            Ingest a PDF
+  chat [--pdf <file>...]         Start interactive chat (optionally preload PDFs)
+  models                         List local Ollama models
+  ingest <paths...>              Ingest files/directories into graph + vector RAG
+  ingest-code <file>             Ingest one source file
+  ingest-pdf <file>              Ingest a PDF or text document (.pdf, .txt, .md)
   search <query>               Search vector RAG with graph reranking
   graph <query>                Search the knowledge graph only
   summary                      Show graph node/edge counts
@@ -63,8 +64,9 @@ Examples:
   claw graph "imports tree_sitter" --depth 2
   claw search "where is reranking implemented?" --top-k 5
   claw chat
-  claw <model>                 Start chat with any model
-  claw qwen2.5-coder:7b        Start chat with qwen2.5-coder:7b
+  claw chat --pdf report.pdf --pdf notes.txt
+  claw models
+  claw qwen2.5-coder:7b        Start chat with any local Ollama model
   claw embedding <model>       Start a model for the embeddings part of the agent
   login [provider]             Log in via OAuth (default: github)
   logout                       Clear saved session
@@ -107,6 +109,25 @@ function findPython() {
   if (process.env.CLAW_PYTHON) {
     return process.env.CLAW_PYTHON;
   }
+
+  const venvCandidates = process.platform === "win32"
+    ? [
+        path.join(packageRoot, "venv", "Scripts", "python.exe"),
+        path.join(packageRoot, ".venv", "Scripts", "python.exe"),
+      ]
+    : [
+        path.join(packageRoot, "venv", "bin", "python3"),
+        path.join(packageRoot, "venv", "bin", "python"),
+        path.join(packageRoot, ".venv", "bin", "python3"),
+        path.join(packageRoot, ".venv", "bin", "python"),
+      ];
+
+  for (const candidate of venvCandidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
   if (commandExists("python3")) {
     return "python3";
   }
@@ -128,6 +149,25 @@ function readOption(args, names, fallback = null) {
     }
   }
   return fallback;
+}
+
+function collectDocumentOptions(args) {
+  const output = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--pdf" || arg === "--document") {
+      const value = args[index + 1];
+      if (value) {
+        output.push("--pdf", value);
+        index += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith("--pdf=") || arg.startsWith("--document=")) {
+      output.push("--pdf", arg.split("=").slice(1).join("="));
+    }
+  }
+  return output;
 }
 
 function collectGlobalOptions(args) {
@@ -161,6 +201,8 @@ function stripKnownOptions(args) {
     "--top-k",
     "--depth",
     "--language",
+    "--pdf",
+    "--document",
   ]);
   const flags = new Set(["--no-recursive", "--no-vector-rag", "--no-hybrid-rerank"]);
   const cleaned = [];
@@ -196,12 +238,50 @@ function runAgent(agentArgs) {
   process.exitCode = result.status;
 }
 
+function bootstrapPythonSpec() {
+  if (process.env.CLAW_PYTHON) {
+    return { command: process.env.CLAW_PYTHON, prefixArgs: [] };
+  }
+
+  const specs = process.platform === "win32"
+    ? [
+        { command: "py", prefixArgs: ["-3.12"] },
+        { command: "py", prefixArgs: ["-3.11"] },
+        { command: "python3", prefixArgs: [] },
+        { command: "python", prefixArgs: [] },
+      ]
+    : [
+        { command: "python3.12", prefixArgs: [] },
+        { command: "python3.11", prefixArgs: [] },
+        { command: "python3", prefixArgs: [] },
+        { command: "python", prefixArgs: [] },
+      ];
+
+  for (const spec of specs) {
+    const versionArgs = spec.prefixArgs.length ? [...spec.prefixArgs, "--version"] : ["--version"];
+    if (commandExists(spec.command, versionArgs)) {
+      return spec;
+    }
+  }
+  return null;
+}
+
+function venvPythonPath(venvDir) {
+  return process.platform === "win32"
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python3");
+}
+
 function runSetup() {
-  const python = findPython();
+  let python = findPython();
   if (!python) {
-    console.error("Python was not found. Install Python 3 or set CLAW_PYTHON=/path/to/python.");
-    process.exitCode = 1;
-    return;
+    const bootstrap = bootstrapPythonSpec();
+    if (!bootstrap) {
+      console.error("Python was not found. Install Python 3.11 or 3.12, or set CLAW_PYTHON=/path/to/python.");
+      process.exitCode = 1;
+      return;
+    }
+    python = bootstrap.command;
   }
   if (!fs.existsSync(requirementsFile)) {
     console.error(`Missing requirements file: ${requirementsFile}`);
@@ -209,8 +289,55 @@ function runSetup() {
     return;
   }
 
-  console.log("Installing Python dependencies...");
-  const result = run(python, ["-m", "pip", "install", "-r", requirementsFile], { cwd: packageRoot });
+  const venvDir = path.join(packageRoot, "venv");
+  const usingBundledVenv = python.includes(`${path.sep}venv${path.sep}`)
+    || python.includes(`${path.sep}.venv${path.sep}`);
+
+  if (!usingBundledVenv && !process.env.CLAW_PYTHON) {
+    const bootstrap = bootstrapPythonSpec();
+    if (bootstrap && !fs.existsSync(venvDir)) {
+      console.log("Creating local Python virtual environment (prefer Python 3.12 for ChromaDB support)...");
+      const createVenv = run(
+        bootstrap.command,
+        [...bootstrap.prefixArgs, "-m", "venv", venvDir],
+        { cwd: packageRoot },
+      );
+      if (createVenv.status !== 0) {
+        process.exitCode = createVenv.status || 1;
+        return;
+      }
+      python = venvPythonPath(venvDir);
+    }
+  }
+
+  console.log(`Installing Python dependencies with ${python}...`);
+  const versionCheck = run(
+    python,
+    ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+    { cwd: packageRoot, stdio: "pipe" },
+  );
+  const pyVersion = (versionCheck.stdout || "").trim();
+  if (pyVersion === "3.13") {
+    console.warn(
+      "Warning: Python 3.13 cannot install ChromaDB (vector RAG). "
+      + "Remove ./venv and run `claw setup` again so it can create a Python 3.12 environment.",
+    );
+  }
+
+  const upgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip"], { cwd: packageRoot });
+  if (upgradePip.status !== 0) {
+    process.exitCode = upgradePip.status || 1;
+    return;
+  }
+
+  const result = run(
+    python,
+    ["-m", "pip", "install", "-r", requirementsFile, "--default-timeout", "120", "--retries", "10"],
+    { cwd: packageRoot },
+  );
+  if (result.status !== 0) {
+    console.error("Python dependency install failed. Check your network connection and run `claw setup` again.");
+  }
   process.exitCode = result.status;
 }
 
@@ -233,13 +360,17 @@ function runDoctor() {
       python,
       [
         "-c",
-        "import ollama, chromadb, ddgs, pypdf, tree_sitter; print('OK  Python packages: installed')",
+        "import importlib.util as u; pkgs=['ollama','chromadb','ddgs','pypdf','tree_sitter','rich']; missing=[p for p in pkgs if u.find_spec(p) is None]; print('OK  Python packages: installed') if not missing else print('NO  Python packages missing: ' + ', '.join(missing))",
       ],
       { cwd: packageRoot, stdio: "pipe" },
     );
-    if (importCheck.status === 0) {
-      process.stdout.write(importCheck.stdout);
-    } else {
+    if (importCheck.stdout) {
+      process.stdout.write(importCheck.stdout.endsWith("\n") ? importCheck.stdout : `${importCheck.stdout}\n`);
+    }
+    if (importCheck.stderr) {
+      process.stderr.write(importCheck.stderr);
+    }
+    if (importCheck.status !== 0 && !importCheck.stdout.includes("NO  Python packages missing")) {
       console.log("NO  Python packages: missing; run `claw setup`");
     }
   }
@@ -298,7 +429,10 @@ function buildAgentArgs(command, args) {
   const hasFlag = (flag) => args.includes(flag);
 
   if (command === "chat") {
-    return [...globalOptions, "chat"];
+    return [...globalOptions, "chat", ...collectDocumentOptions(args)];
+  }
+  if (command === "models") {
+    return [...globalOptions, "models"];
   }
   if (command === "languages") {
     return [...globalOptions, "languages"];
@@ -325,7 +459,10 @@ function buildAgentArgs(command, args) {
     return [...globalOptions, "ingest-code", cleaned[0], ...(language ? ["--language", language] : [])];
   }
   if (command === "ingest-pdf") {
-    return [...globalOptions, "ingest-pdf", ...cleaned.slice(0, 1)];
+    if (cleaned.length !== 1) {
+      throw new Error("ingest-pdf needs one file path (.pdf, .txt, or .md).");
+    }
+    return [...globalOptions, "ingest-pdf", cleaned[0]];
   }
   if (command === "search") {
     const query = cleaned.join(" ").trim();
@@ -371,6 +508,11 @@ function main() {
     runSetup();
     return;
   }
+  if (command === "models") {
+    runAgent(["models"]);
+    return;
+  }
+
   if (command === "doctor") {
     runDoctor();
     return;
@@ -582,7 +724,7 @@ function main() {
 
 // ── AUTH GATE ──────────────────────────────────────────────
 // skip auth for setup/doctor/help (they don't touch the agent)
-  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup"]);
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models"]);
   if (!NO_AUTH_COMMANDS.has(command)) {
     const session = loadSession();
   if (!session) {
@@ -597,7 +739,7 @@ function main() {
 // ──────────────────────────────────────────────────────────
   // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
   const KNOWN_COMMANDS = new Set([
-    "chat", "ingest", "ingest-code", "ingest-pdf", "search",
+    "chat", "models", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
     "setup", "doctor", "raw", "embedding","usage", "credits", "buy", "topup"
   ]);
