@@ -2854,7 +2854,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 session_title_set = True
 
             print_assistant_start()
-            with ChatSpinner("Thinking…"):
+            with ChatSpinner("Being Creative...."):
                 response = agent.chat(user_input)
             print_assistant_response(response)
     except KeyboardInterrupt:
