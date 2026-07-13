@@ -219,10 +219,7 @@ def resolve_chat_model(explicit: Optional[str] = None) -> str:
 def pick_chat_model_interactive() -> str:
     models = list_ollama_models()
     if not models:
-        raise RuntimeError(
-            "No Ollama models found. Pull one first, e.g.: ollama pull llama3.2:3b"
-        )
-
+        pull_model_with_progress(models)
     if not RICH_AVAILABLE:
         print("Available Ollama models:")
         for index, entry in enumerate(models, start=1):
