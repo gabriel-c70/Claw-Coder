@@ -87,12 +87,12 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
         )
         generate_title = response["message"]["content"].strip()
     except Exception:
-        generated_title = text
+        generate_title = text
 
-    if len(generated_title) <= max_len:
-        title = generated_title
+    if len(generate_title) <= max_len:
+        title = generate_title
     else:
-        cut = generated_title[:max_len]
+        cut = generate_title[:max_len]
         if " " in cut:
             cut = cut.rsplit(" ", 1)[0]
         title = cut + "…"

@@ -345,7 +345,7 @@ function runSetup() {
   startOllamaServe();
   pullDefaultModels(DEFAULT_OLLAMA_MODELS);
   process.exitCode = 0;
-  process.exitCode = result.status;
+
 }
 
 function runDoctor() {
@@ -489,7 +489,7 @@ function startOllamaServe() {
     console.error("Ollama isn't installed - cannot start it. Run `claw setup` first.");
     return false;
   }
-  console.log("Initializing 🦙 ollama in the unseen(background)......");
+  console.log("Initializing 🦙 ollama in the unseen......");
   const proc = spawn("ollama", ["serve"], {
     detached: true,
     stdio: "ignore"
@@ -520,7 +520,7 @@ function pullDefaultModels(models) {
 function ensureOllamaReadyForChat() {
   // best-effort auto start before any chat-driving command, in case the
   // machine rebooted since `claw setup` last ran ollama serve.
-  if (commandExists("ollama") && !isOllamaRuniing()) {
+  if (commandExists("ollama") && !isOllamaRunning()) {
     startOllamaServe();
   }
 }
