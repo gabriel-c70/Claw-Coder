@@ -68,6 +68,7 @@ from claw_ui import (
     resolve_chat_model,
     set_terminal_title,
     validate_ollama_model,
+    print_print_goodbye
 )
 
 load_dotenv()
@@ -2957,4 +2958,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print_print_goodbye()
+
+

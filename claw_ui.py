@@ -30,7 +30,10 @@ def _console() -> "Console":
     if not RICH_AVAILABLE:
         raise RuntimeError("rich is not installed. Run: claw setup")
     return Console(highlight=False)
-
+def print_print_goodbye():
+    if RICH_AVAILABLE:
+        _console().print("[dim]\nSee you next time · Claw-Coder: Push me to the limit™️[/dim]")
+        sys.exit(130)
 
 def set_terminal_title(title: str) -> None:
     """Set the terminal tab/window title (OSC 0);"""
@@ -74,34 +77,9 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
     is_available = any(m["name"] == target for m in models)
     if is_available:
         if RICH_AVAILABLE:
-            _console().print(f"[bold blue]{target} installed[/bold blue]", end=" ")
+            _console().print(f"[bold blue] ✔️ {target} installed[/bold blue]", end=" ")
     else:
-        if RICH_AVAILABLE:
-            _console().print(f"[bold green]{target} not installed[/bold green]", end=" ")
-            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn
-            import ollama
-
-            def pull_model_with_progress(model_name: str = target):
-                with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[bold blue]{task.description}"),
-                        BarColumn(),
-                        DownloadColumn(),
-                ) as progress:
-                    task = progress.add_task(f"Pulling {model_name}", total=None)
-
-                    for chunk in ollama.pull(model_name, stream=True):
-                        total = chunk.get("total")
-                        completed = chunk.get("completed")
-                        status_text = chunk.get("status", "")
-                        if total:
-                            progress.update(task, total=total, completed=completed or 0,
-                                            description=f"{model_name} — {status_text}")
-                        else:
-                            progress.update(task, description=f"{model_name} — {status_text}")
-
-                print(f"✓ {model_name} installed.")
-            pull_model_with_progress()
+        pull_model_with_progress(target)
     try:
         response = ollama.chat(
             model="llama3.2:1b",
@@ -121,6 +99,50 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
 
     return f"{DEFAULT_TAB_PREFIX} · {title}"
 
+
+def pull_model_with_progress(model_name: str):
+    if RICH_AVAILABLE:
+        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn
+        import ollama
+        _console().print(f"[bold green] ❌ {model_name} not installed[/bold green]")
+        _console().print()
+        with Progress(
+                SpinnerColumn(spinner_name="runner"),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                DownloadColumn(),
+        ) as progress:
+            task = progress.add_task(f"Pulling {model_name}", total=None)
+
+            for chunk in ollama.pull(model_name, stream=True):
+                total = chunk.get("total")
+                completed = chunk.get("completed")
+                status_text = chunk.get("status", "")
+                if total:
+                    progress.update(task, total=total, completed=completed or 0,
+                                    description=f"Internalizing {model_name} — {friendly_status(status_text)}")
+                else:
+                    progress.update(task, description=f"Loading {model_name} — {friendly_status(status_text)}")
+
+        print(f"✓ {model_name} installed.")
+
+
+    pull_model_with_progress()
+
+def friendly_status(status_text: str) -> str:
+    if not status_text:
+        return "Sifting"
+    mapping = {
+        "verifying sha256 digest": "Verifying download…",
+        "writing manifest": "Finalizing…",
+        "removing any unused layers": "Cleaning up…",
+        "success": "Done",
+    }
+    if status_text in mapping:
+        return mapping[status_text]
+    if status_text.startswith("pulling") and re.search(r"[0-9a-f]{6,}", status_text):
+        return "Dribbling tasks for AI model"
+    return status_text.capitalize()
 
 def list_ollama_models() -> List[Dict[str, Any]]:
     import ollama
@@ -163,10 +185,23 @@ def validate_ollama_model(model: str) -> str:
     for name in available:
         if name.split(":")[0] == model.split(":")[0]:
             return name
+    try:
+        pull_model_with_progress(model)
+    except Exception:
+        raise ValueError(
+            f"Could not install {model}."
+            f"Try manually pulling it: ollama pull {model}, or check the spelling."
+        ) from None
+    available_after = {entry["name"] for entry in list_ollama_models()}
+    if model in available_after:
+        return model
+    if f"{model}:latest" in available_after:
+        return f"{model}:latest"
     raise ValueError(
-        f"Model '{model}' is not available locally. "
-        f"Run: ollama pull {model.split(':')[0]}"
+        f"Even after creating a request for {model} its still not available this can be caused lack of the model in general."
+        f"Try manually pulling it: ollama pull {model} or check the spelling of the model"
     )
+
 
 
 def resolve_chat_model(explicit: Optional[str] = None) -> str:
@@ -326,7 +361,7 @@ class ChatSpinner:
 
     def __enter__(self) -> "ChatSpinner":
         if RICH_AVAILABLE:
-            self._status = _console().status(f"[cyan]{self.label}[/cyan]", spinner="star")
+            self._status = _console().status(f"[cyan]{self.label}[/cyan]", spinner="moon")
             self._status.__enter__()
         else:
             print(f"{self.label}")
