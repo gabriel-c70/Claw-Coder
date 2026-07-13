@@ -2743,7 +2743,7 @@ def preview_code_chunks(path: str, language: Optional[str] = None) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Standalone RAG agent")
+    parser = argparse.ArgumentParser(description="Claw-coder is a local first AI agent that turns small local models into powerful coding companions")
     parser.add_argument("--model", default=DEFAULT_CHAT_MODEL)
     parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
     parser.add_argument("--db-path", default=DEFAULT_DB_PATH)
