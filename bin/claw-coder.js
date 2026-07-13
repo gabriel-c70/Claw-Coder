@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 "use strict";
 
-const { spawnSync } = require("node:child_process");
+const { spawnSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { login, loadSession, clearSession } = require("./auth");
+const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "qwen3-embedding:4b", "translategemma:4b"]
 
 const packageRoot = path.resolve(__dirname, "..");
 const pythonAgent = path.join(packageRoot, "agent_rag.py");
 const requirementsFile = path.join(packageRoot, "requirements.txt");
+
 
 function loadEnvFile() {
   const envFile = path.join(packageRoot, ".env");
@@ -338,6 +340,11 @@ function runSetup() {
   if (result.status !== 0) {
     console.error("Python dependency install failed. Check your network connection and run `claw setup` again.");
   }
+  console.log("");
+  installOllama();
+  startOllamaServe();
+  pullDefaultModels(DEFAULT_OLLAMA_MODELS);
+  process.exitCode = 0;
   process.exitCode = result.status;
 }
 
@@ -411,6 +418,112 @@ async function apiFetch(pathname, session, options = {}) {
     clearTimeout(timeout);
   }
 }
+function sleepSync(ms) {
+  const platform = process.platform;
+  if (platform === "win32") {
+    spawnSync("powershell", ["-NoProfile", "-Command", `Start-Sleep -Milliseconds ${ms}`], { stdio: "ignore" });
+  } else {
+    spawnSync("sleep", [(ms / 1000).toString()], { stdio: "ignore" });
+  }
+}
+
+function isOllamaRunning() {
+  // ollama list will only work if daemon is actually reachable
+  const result = run("ollama", ["list"], { stdio: "pipe" });
+  return result.status === 0;
+}
+function installOllama() {
+  if (commandExists("ollama")) {
+    console.log("Ollama already buckled up, skipping install.");
+    return true;
+  }
+  const platform = process.platform;
+  if (platform === "darwin" || platform === "linux") {
+    console.log("Internalizing Ollama...");
+    const result = spawnSync(
+        "sh",
+        ["-c", "curl -fsSL https://ollama.com/install.sh | sh"],
+        { stdio: "inherit" },
+    );
+    if (result.status !== 0) {
+      console.error("😓 Ollama install failed. Try installing it manually: https://ollama.com/download");
+      return false;
+    }
+    return true;
+  }
+  if (platform === "win32") {
+    if (commandExists("winget", ["--version"])) {
+      console.log("Internalizing Ollama via winget....");
+      const result = spawnSync(
+          "winget",
+          [
+              "install", "--id", "Ollama.Ollama", "-e",
+              "--silent", "--accept-package-agreements", "--accept-source-agreements",
+          ],
+          { stdio: "inherit" },
+      );
+      if (result.status === 0) {
+        console.log("Ollama is in the clear. You may need to open a new terminal for PATH to update.");
+        return true;
+      }
+      console.error("winget install failed. Falling back to manual download instructions.");
+    }
+    console.error(
+        "Could not auto install Ollama on Windows.\n"
+        + "Install it manually: https://ollama.com/download/windows\n"
+        + "Or, if you have winget: winget install --id Ollama.Ollama -e",
+    );
+    return false;
+  }
+
+  console.error(`Unrecognized platform '${platform}' Install Ollama manually: https://ollama.com/download`)
+  return false;
+}
+
+function startOllamaServe() {
+  if (isOllamaRunning()) {
+    console.log("Ollama is already running.");
+    return true;
+  }
+  if (!commandExists("ollama")) {
+    console.error("Ollama isn't installed - cannot start it. Run `claw setup` first.");
+    return false;
+  }
+  console.log("Initializing 🦙 ollama in the unseen(background)......");
+  const proc = spawn("ollama", ["serve"], {
+    detached: true,
+    stdio: "ignore"
+  });
+  proc.unref(); // let it keep running after Node process exits
+  // Poll every 500ms for up to 5s instead of hard-spinning the CPU.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    sleepSync(500);
+    if (isOllamaRunning()) {
+      console.log("Ollama is behaving.");
+      return true;
+    }
+  }
+  console.warn("Ollama may still be starting up - if `claw chat` fails to connect, relax for a few seconds and then try again.");
+  return true;
+}
+
+function pullDefaultModels(models) {
+  for (const model of models) {
+    console.log(`Pulling ${model}...`);
+    const result = spawnSync("ollama", ["pull", model], { stdio: "inherit" });
+    if (result.status !== 0) {
+      console.warn(`Warning: could not pull ${model}. You can retry later: ollama pull ${model}`);
+    }
+  }
+}
+
+function ensureOllamaReadyForChat() {
+  // best-effort auto start before any chat-driving command, in case the
+  // machine rebooted since `claw setup` last ran ollama serve.
+  if (commandExists("ollama") && !isOllamaRuniing()) {
+    startOllamaServe();
+  }
+}
 
 function requireSession() {
   const session = loadSession();
@@ -429,6 +542,7 @@ function buildAgentArgs(command, args) {
   const hasFlag = (flag) => args.includes(flag);
 
   if (command === "chat") {
+    ensureOllamaReadyForChat();
     return [...globalOptions, "chat", ...collectDocumentOptions(args)];
   }
   if (command === "models") {
