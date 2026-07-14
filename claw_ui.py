@@ -281,7 +281,7 @@ def print_banner(model: str, embedding_model: str) -> None:
     body.append("Claw Coder\n", style="bold cyan")
     body.append(f"chat  {model}\n", style="white")
     body.append(f"embed {embedding_model}\n", style="dim")
-    body.append("\nCommands: /models /model <name> - switch models /pdf <file> /workspace - connect to a codespace /help /title  exit\n", style="dim italic")
+    body.append("\nCommands: /models /pdf <file> /help /title  exit\n", style="dim italic")
     _console().print(Panel(body, border_style="cyan", padding=(1, 2)))
 
 
