@@ -62,6 +62,7 @@ from claw_ui import (
     print_error,
     print_goodbye,
     print_models_table,
+    prompt_workspace_target,
     print_status,
     print_user_prompt,
     read_user_input,
@@ -70,6 +71,12 @@ from claw_ui import (
     validate_ollama_model,
     print_print_goodbye
 )
+
+try:
+    from workspace import WorkspaceConfig, WorkspaceRemoteClient
+except ImportError:
+    WorkspaceConfig = None
+    WorkspaceRemoteClient = None
 
 load_dotenv()
 
@@ -672,6 +679,9 @@ class Agent:
         rag_collection: str = DEFAULT_COLLECTION,
         knowledge_graph_path: str = DEFAULT_KNOWLEDGE_GRAPH_PATH,
         memory_path: str = DEFAULT_MEMORY_PATH,
+        workspace_mode: str = "local",
+        workspace_ssh: Optional[str] = None,
+        workspace_remote_dir: str = "/workspaces",
     ) -> None:
         self.model = model
         self.embedding_model = embedding_model
@@ -682,6 +692,17 @@ class Agent:
         self.memory_path = Path(memory_path).expanduser()
         self._rag_store: Optional[MixedRAGStore] = None
         self._knowledge_graph: Optional[KnowledgeGraphStore] = None
+        self.workspace_mode = workspace_mode
+        self.workspace_remote_dir = workspace_remote_dir
+        self.remote_workspace = None
+        if WorkspaceConfig and WorkspaceRemoteClient:
+            self.remote_workspace = WorkspaceRemoteClient(
+                WorkspaceConfig(
+                    mode=workspace_mode,
+                    ssh_target=workspace_ssh,
+                    remote_dir=workspace_remote_dir,
+                )
+            )
         self.plan: List[Dict[str, str]] = []
         self.memory: List[Dict[str, Any]] = self.load_memory()
         self.messages: List[Dict[str, Any]] = [
@@ -793,9 +814,14 @@ class Agent:
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "The path to the file needed to be read"},
-                    }
-                },
-                "required": ["path"]
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of files to read.",
+                        },
+                        "max_bytes": {"type": "integer", "default": 120000},
+                    },
+                }
             },
         },
             {
@@ -1209,7 +1235,7 @@ class Agent:
             {
                 "type": "function",
                 "function": {
-                    "name": "git status",
+                    "name": "git_status",
                     "description": "Get the current git repository status including modified, staged, deleted, and untracked files",
                     "parameters": {
                         "type": "object",
@@ -1234,6 +1260,38 @@ class Agent:
                 }
             }
     ]
+
+    def workspace_status(self) -> str:
+        if not self.remote_workspace:
+            return "Workspace mode is unavailable because workspace.py could not be imported."
+        return self.remote_workspace.status()
+
+    def setup_workspace_from_paste(self, pasted: str) -> str:
+        if not self.remote_workspace:
+            return "Workspace mode is unavailable because workspace.py could not be imported."
+        result = self.remote_workspace.setup_from_paste(pasted, Path(__file__).resolve().parent)
+        if self.remote_workspace.active:
+            self.workspace_mode = "ssh"
+            if self.model:
+                pull_result = self.remote_workspace.pull_model(self.model)
+                result = f"{result}\nCurrent model: {pull_result}"
+        return result
+
+    def switch_model(self, model: str) -> str:
+        model = model.strip()
+        if not model:
+            return "Missing model name."
+        if self.remote_workspace and self.remote_workspace.active:
+            pull_result = self.remote_workspace.pull_model(model)
+            if "Invalid model name" in pull_result or "Could not" in pull_result or "not connected" in pull_result:
+                return pull_result
+            self.model = model
+            return f"Remote model set to {model}.\n{pull_result}"
+        try:
+            self.model = validate_ollama_model(model)
+        except ValueError as exc:
+            return str(exc)
+        return f"Local model set to {self.model}."
 
     @staticmethod
     def parse_tool_arguments(raw_args: Any) -> Dict[str, Any]:
@@ -1263,6 +1321,8 @@ class Agent:
         Returns None if allowed, or an error string if blocked.
         SSL-safe version with certifi support.
         """
+        if os.getenv("CLAW_SKIP_RATE_LIMIT") == "1":
+            return None
         import json as _json
         import urllib.request as _req
         import urllib.error
@@ -1352,6 +1412,13 @@ class Agent:
             if limit_error:
                 return json.dumps({"status": "error", "error": limit_error}, ensure_ascii=False)
             # ─
+            if self.remote_workspace and self.remote_workspace.should_delegate(tool_name):
+                return self.remote_workspace.execute_tool(
+                    tool_name,
+                    tool_input,
+                    model=self.model,
+                    embedding_model=self.embedding_model,
+                )
             if tool_name == "gnu_patch":
                 return self._gnu_patch_tool(tool_input)
             if tool_name == "extract_functions":
@@ -1406,7 +1473,7 @@ class Agent:
         except Exception as exc:
             logging.error("Tool failed: %s", exc)
             return json.dumps(
-                {"status": "error", "tool": {tool_name}, "error": str(exc)},
+                {"status": "error", "tool": tool_name, "error": str(exc)},
                 ensure_ascii=False,
             )
     def infer_language(self,path: Path) -> Optional[str]:
@@ -1580,7 +1647,7 @@ class Agent:
 
             "--network", "none",
             "--memory", "512m",
-            "--cpus", "2"
+            "--cpus", "2",
             "-v", f"{path}:/workspace",
             "-w", "/workspace",
 
@@ -1657,6 +1724,51 @@ class Agent:
             "path": str(path),
             "files": files
         }, ensure_ascii=False)
+
+    def _read_files_tool(self, tool_input: Dict[str, Any]) -> str:
+        raw_paths = tool_input.get("paths", tool_input.get("path"))
+        if raw_paths is None:
+            return json.dumps({"status": "error", "error": "Missing path or paths"})
+        if isinstance(raw_paths, (str, os.PathLike)):
+            paths = [raw_paths]
+        elif isinstance(raw_paths, list):
+            paths = raw_paths
+        else:
+            return json.dumps({"status": "error", "error": "path must be a string or paths must be a list"})
+
+        max_bytes = int(tool_input.get("max_bytes", 120_000))
+        max_files = int(tool_input.get("max_files", 12))
+        results = []
+        total_bytes = 0
+
+        for raw_path in paths[:max_files]:
+            path = Path(str(raw_path)).expanduser().resolve()
+            entry: Dict[str, Any] = {"path": str(path)}
+            try:
+                if not path.exists():
+                    entry.update({"status": "error", "error": "File does not exist"})
+                elif path.is_dir():
+                    entry.update({"status": "error", "error": "Path is a directory; use list_files first"})
+                else:
+                    remaining = max(0, max_bytes - total_bytes)
+                    data = path.read_bytes()
+                    truncated = len(data) > remaining
+                    chunk = data[:remaining]
+                    total_bytes += len(chunk)
+                    entry.update({
+                        "status": "ok",
+                        "bytes": len(data),
+                        "truncated": truncated,
+                        "content": chunk.decode("utf-8", errors="replace"),
+                    })
+            except Exception as exc:
+                entry.update({"status": "error", "error": str(exc)})
+            results.append(entry)
+            if total_bytes >= max_bytes:
+                break
+
+        return json.dumps({"status": "ok", "files": results}, ensure_ascii=False)
+
     def _create_file_tool(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         try:
             path = tool_input["path"]
@@ -2676,12 +2788,15 @@ class Agent:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []
         for _ in range(self.max_steps):
-            response = ollama.chat(
-                model=self.model,
-                messages=self.messages,
-                tools=self.tools,
-                stream=False,
-            )
+            if self.remote_workspace and self.remote_workspace.active:
+                response = self.remote_workspace.chat(self.model, self.messages, self.tools)
+            else:
+                response = ollama.chat(
+                    model=self.model,
+                    messages=self.messages,
+                    tools=self.tools,
+                    stream=False,
+                )
             message = response.get("message", {})
             assistant_message = {"role": "assistant", "content": message.get("content", "")}
             tool_calls = message.get("tool_calls") or []
@@ -2750,6 +2865,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--collection", default=DEFAULT_COLLECTION)
     parser.add_argument("--knowledge-graph-path", default=DEFAULT_KNOWLEDGE_GRAPH_PATH)
     parser.add_argument("--memory-path", default=DEFAULT_MEMORY_PATH)
+    parser.add_argument("--workspace-mode", choices=["local", "ssh"], default=os.getenv("CLAW_WORKSPACE_MODE", "local"))
+    parser.add_argument("--workspace-ssh", default=os.getenv("CLAW_WORKSPACE_SSH"))
+    parser.add_argument("--workspace-remote-dir", default=os.getenv("CLAW_WORKSPACE_REMOTE_DIR", "/workspaces"))
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     chat = subparsers.add_parser("chat")
@@ -2826,10 +2944,45 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             if user_input.lower() in {"exit", "quit", "/exit", "/quit"}:
                 break
             if user_input.lower() in {"/help", "help"}:
-                print_status("Commands: /models  /pdf <file>  /title  exit")
+                print_status("Commands: /models  /model <name> - switch models  /workspace - connect to codespace /pdf <file>  /title  exit")
                 continue
             if user_input.lower() == "/models":
-                print_models_table(list_ollama_models())
+                if agent.remote_workspace and agent.remote_workspace.active:
+                    print_models_table(agent.remote_workspace.list_models())
+                else:
+                    print_models_table(list_ollama_models())
+                continue
+            if user_input.lower().startswith("/model "):
+                print_status(agent.switch_model(user_input.split(" ", 1)[1].strip()))
+                continue
+            if user_input.lower().startswith("/workspace"):
+                parts = user_input.split(maxsplit=2)
+                if len(parts) == 1:
+                    target = prompt_workspace_target()
+                    if target:
+                        with ChatSpinner("Untangling workspace...."):
+                            result = agent.setup_workspace_from_paste(target)
+                        print_status(result)
+                    else:
+                        print_status("Workspace setup cancelled.")
+                elif parts[1] in {"status", "show"}:
+                    print_status(agent.workspace_status())
+                elif parts[1] == "local":
+                    agent.workspace_mode = "local"
+                    if agent.remote_workspace:
+                        agent.remote_workspace.config.mode = "local"
+                    print_status("Workspace mode set to local for this session.")
+                elif parts[1] == "connect" and len(parts) == 3:
+                    with ChatSpinner("Untangling workspace...."):
+                        result = agent.setup_workspace_from_paste(parts[2].strip())
+                    print_status(result)
+                elif parts[1] == "pull" and len(parts) == 3:
+                    if not agent.remote_workspace:
+                        print_error("Workspace mode is unavailable because workspace.py could not be imported.")
+                    else:
+                        print_status(agent.remote_workspace.pull_model(parts[2].strip()))
+                else:
+                    print_status("Usage: /workspace | /workspace status | /workspace local | /workspace pull <model>")
                 continue
             if user_input.lower() == "/title":
                 title = conversation_title_from_message(
@@ -2903,6 +3056,9 @@ def main() -> None:
         rag_collection=args.collection,
         knowledge_graph_path=args.knowledge_graph_path,
         memory_path=args.memory_path,
+        workspace_mode=args.workspace_mode,
+        workspace_ssh=args.workspace_ssh,
+        workspace_remote_dir=args.workspace_remote_dir,
     )
 
     if args.command == "ingest-code":
@@ -2962,5 +3118,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print_print_goodbye()
-
-

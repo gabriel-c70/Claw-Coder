@@ -176,15 +176,17 @@ def validate_ollama_model(model: str) -> str:
     model = model.strip()
     if not model:
         raise ValueError("Model name cannot be empty.")
+    if any(char.isspace() for char in model):
+        raise ValueError(
+            f"Invalid Ollama model name: {model!r}. "
+            "Use names like llama3.2:1b or qwen2.5-coder:7b without spaces."
+        )
     available = {entry["name"] for entry in list_ollama_models()}
     if model in available:
         return model
     # Ollama tags often omit :latest
     if f"{model}:latest" in available:
         return f"{model}:latest"
-    for name in available:
-        if name.split(":")[0] == model.split(":")[0]:
-            return name
     try:
         pull_model_with_progress(model)
     except Exception:
@@ -332,6 +334,20 @@ def print_status(message: str) -> None:
         _console().print(f"[dim]{message}[/dim]")
     else:
         print(message)
+
+
+def prompt_workspace_target() -> str:
+    if RICH_AVAILABLE:
+        body = Text()
+        body.append("Paste your GitHub Codespace SSH command or link.\n", style="bold cyan")
+        body.append("Example: ssh cs.your-codespace-name\n", style="dim")
+        body.append("Claw will configure SSH, prepare the remote backend, and keep this chat open.", style="dim")
+        _console().print(Panel(body, title="[bold]Workspace[/bold]", border_style="cyan", padding=(1, 2)))
+        return Prompt.ask("[bold cyan]Codespace SSH[/bold cyan]").strip()
+    print("Workspace")
+    print("Paste your GitHub Codespace SSH command or link.")
+    print("Example: ssh cs.your-codespace-name")
+    return input("Codespace SSH: ").strip()
 
 
 def print_error(message: str) -> None:

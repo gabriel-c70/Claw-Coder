@@ -31,6 +31,7 @@
     "agent_sever.py",
     "agent_knowledge.py",
     "claw_ui.py",
+    "workspace.py",
     "supabase",
     "requirements.txt",
     "README.md",
