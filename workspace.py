@@ -1,0 +1,420 @@
+"""
+Optional remote workspace support for Claw-Coder.
+
+Local mode stays the default. When a user opts into workspace mode, Claw keeps
+the terminal UI and auth local while chat, model pulls, and coding tools run on
+the user's Codespace over SSH.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import shlex
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import parse_qs, urlparse
+
+
+SSH_CONFIG_PATH = Path.home() / ".ssh" / "config"
+SSH_MARKER_START = "# >>> claw-coder workspace >>>"
+SSH_MARKER_END = "# <<< claw-coder workspace <<<"
+DEFAULT_REMOTE_DIR = "/workspaces"
+REMOTE_AGENT_DIR = "~/.claw-coder/remote-agent"
+
+REMOTE_TOOL_SCRIPT = r"""
+import base64
+import json
+import os
+import sys
+from pathlib import Path
+
+payload = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
+workspace_dir = Path(payload.get("workspace_dir") or ".").expanduser()
+if workspace_dir.exists():
+    os.chdir(workspace_dir)
+
+sys.path.insert(0, str(Path(payload["agent_dir"]).expanduser()))
+from agent_rag import Agent
+
+agent = Agent(
+    model=payload.get("model") or os.getenv("CLAW_MODEL") or os.getenv("OLLAMA_MODEL") or "llama3.2:1b",
+    embedding_model=payload.get("embedding_model") or os.getenv("CLAW_EMBEDDING_MODEL", "qwen3-embedding:4b"),
+    workspace_mode="local",
+)
+print(agent.execute_tool(payload["tool_name"], payload.get("tool_input") or {}))
+"""
+
+REMOTE_CHAT_SCRIPT = r"""
+import base64
+import json
+import os
+import sys
+from pathlib import Path
+
+payload = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
+workspace_dir = Path(payload.get("workspace_dir") or ".").expanduser()
+if workspace_dir.exists():
+    os.chdir(workspace_dir)
+
+import ollama
+
+response = ollama.chat(
+    model=payload["model"],
+    messages=payload["messages"],
+    tools=payload.get("tools"),
+    stream=False,
+)
+print(json.dumps(response, ensure_ascii=False))
+"""
+
+
+@dataclass
+class WorkspaceConfig:
+    mode: str = "local"
+    ssh_target: Optional[str] = None
+    remote_dir: str = DEFAULT_REMOTE_DIR
+    remote_agent_dir: str = REMOTE_AGENT_DIR
+    python: str = "python3"
+    timeout_seconds: int = 14400
+
+
+class WorkspaceRemoteClient:
+    REMOTE_TOOLS: Set[str] = {
+        "read_files",
+        "list_files",
+        "edit_file",
+        "create_file",
+        "delete_file",
+        "apply_patch",
+        "git_apply_patch",
+        "gnu_patch",
+        "git_diff",
+        "git_status",
+        "extract_functions",
+        "search_code",
+        "run_terminal",
+        "run_tests",
+        "execute_code_in_docker",
+        "ingest_code_knowledge",
+        "ingest_pdf_knowledge",
+        "ingest_paths_knowledge",
+        "search_knowledge_base",
+        "search_knowledge_graph",
+    }
+
+    def __init__(self, config: WorkspaceConfig) -> None:
+        self.config = config
+
+    @property
+    def active(self) -> bool:
+        return self.config.mode == "ssh" and bool(self.config.ssh_target)
+
+    def should_delegate(self, tool_name: str) -> bool:
+        return self.active and tool_name in self.REMOTE_TOOLS
+
+    def status(self) -> str:
+        if not self.active:
+            return "Workspace mode: local. Run /workspace and paste your Codespace SSH link to move work remote."
+        return (
+            "Workspace mode: Claw-Coder's new machine\n"
+            f"Host: {self.config.ssh_target}\n"
+            f"Workspace: {self.config.remote_dir}\n"
+            "Chat, model pulls, and coding tools are running remotely."
+        )
+
+    def setup_from_paste(self, pasted: str, package_root: Path) -> str:
+        target = parse_codespace_target(pasted)
+        if not target:
+            return "Could not find an SSH host in that input. Paste something like: ssh cs.your-codespace-name"
+
+        config_message = self.ensure_ssh_config(target)
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=14400)
+        if verify.returncode != 0:
+            return (
+                f"SSH config step: {config_message}\n"
+                f"Could not connect to {target}.\n"
+                f"{(verify.stderr or verify.stdout).strip()}"
+            )
+
+        self.config.mode = "ssh"
+        self.config.ssh_target = target
+        discovered = self.discover_workspace_dir(target)
+        if discovered:
+            self.config.remote_dir = discovered
+
+        copied = self.sync_backend(package_root)
+        prepared = self.prepare_remote()
+        return (
+            f"Connected to {target}\n"
+            f"SSH config: {config_message}\n"
+            f"Remote workspace: {self.config.remote_dir}\n"
+            f"Backend: {copied}\n"
+            f"Dependencies: {prepared}\n"
+            "Workspace mode is on. Continue interacting with claw-coder normally; model pulls and coding work run on the Codespace."
+        )
+
+    def ensure_ssh_config(self, target: str) -> str:
+        if self.host_in_ssh_config(target):
+            return "already configured"
+        if target.startswith("cs."):
+            codespace = target[3:]
+            try:
+                gh = subprocess.run(
+                    ["gh", "codespace", "ssh", "--config", "--codespace", codespace],
+                    text=True,
+                    capture_output=True,
+                    timeout=14400,
+                )
+            except FileNotFoundError:
+                return "GitHub CLI not found; install gh or paste a host already configured in ~/.ssh/config"
+            if gh.returncode == 0 and gh.stdout.strip():
+                self.write_managed_ssh_config(gh.stdout.strip())
+                return "configured with gh codespace ssh --config"
+            return (gh.stderr or gh.stdout or "gh codespace ssh --config returned no config").strip()
+        return "host will use existing SSH defaults"
+
+    def pull_model(self, model: str) -> str:
+        model = normalize_model_name(model)
+        if not model:
+            return "Missing model name."
+        if any(char.isspace() for char in model):
+            return "Invalid model name. Use names like llama3.2:1b or qwen2.5-coder:7b without spaces."
+        if not self.active:
+            return "Workspace is not connected. Run /workspace first."
+        result = self._ssh(self.config.ssh_target or "", f"ollama pull {shlex.quote(model)}", timeout=self.config.timeout_seconds)
+        output = (result.stdout + result.stderr).strip()
+        if result.returncode != 0:
+            return output or f"Could not pull {model} on {self.config.ssh_target}."
+        return output or f"{model} installed on {self.config.ssh_target}."
+
+    def list_models(self) -> List[Dict[str, Any]]:
+        if not self.active:
+            return []
+        script = "import json, ollama; print(json.dumps(ollama.list(), default=lambda o: getattr(o, '__dict__', str(o))))"
+        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=14400)
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        try:
+            data = json.loads(result.stdout.strip().splitlines()[-1])
+        except json.JSONDecodeError:
+            return []
+        raw_models = data.get("models", []) if isinstance(data, dict) else []
+        models: List[Dict[str, Any]] = []
+        for item in raw_models:
+            if isinstance(item, dict):
+                name = item.get("model") or item.get("name")
+                size = item.get("size")
+            else:
+                name = getattr(item, "model", None) or getattr(item, "name", None)
+                size = getattr(item, "size", None)
+            if name:
+                models.append({"name": name, "size": size})
+        return sorted(models, key=lambda entry: entry["name"])
+
+    def chat(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not self.active:
+            raise RuntimeError("Workspace is not connected")
+        model = normalize_model_name(model)
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "workspace_dir": self.config.remote_dir,
+        }
+        output = self._remote_python(REMOTE_CHAT_SCRIPT, payload)
+        return json.loads(output)
+
+    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any], model: str = "", embedding_model: str = "") -> str:
+        if not self.active:
+            return json.dumps({"status": "error", "error": "Workspace is not connected"})
+        if tool_name == "run_terminal":
+            return self._run_terminal(tool_input)
+        payload = {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "workspace_dir": self.config.remote_dir,
+            "agent_dir": self.config.remote_agent_dir,
+            "model": model,
+            "embedding_model": embedding_model,
+        }
+        return self._remote_python(REMOTE_TOOL_SCRIPT, payload)
+
+    def sync_backend(self, package_root: Path) -> str:
+        files = [
+            "agent_rag.py",
+            "agent_knowledge.py",
+            "claw_ui.py",
+            "workspace.py",
+            "requirements.txt",
+            "claw_coder_system_prompt",
+        ]
+        existing = [name for name in files if (package_root / name).exists()]
+        if not existing:
+            return "no local backend files found"
+        remote_dir = self._remote_shell_path(self.config.remote_agent_dir)
+        tar_cmd = "tar -czf - " + " ".join(shlex.quote(name) for name in existing)
+        remote_cmd = f"mkdir -p {remote_dir} && tar -xzf - -C {remote_dir}"
+        result = subprocess.run(
+            f"{tar_cmd} | ssh {shlex.quote(self.config.ssh_target or '')} {shlex.quote(remote_cmd)}",
+            cwd=package_root,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=14400,
+        )
+        if result.returncode != 0:
+            return (result.stderr or result.stdout or "copy failed").strip()
+        return f"synced to {self.config.remote_agent_dir}"
+
+    def prepare_remote(self) -> str:
+        remote_agent_dir = self._remote_shell_path(self.config.remote_agent_dir)
+        command = (
+            f"cd {remote_agent_dir} && "
+            f"{shlex.quote(self.config.python)} -m pip install --user -r requirements.txt >/tmp/claw-coder-pip.log 2>&1 || true && "
+            "command -v ollama >/dev/null && printf ready || printf 'ollama missing'"
+        )
+        result = self._ssh(self.config.ssh_target or "", command, timeout=7200)
+        return (result.stdout or result.stderr or "prepared").strip()
+
+    def discover_workspace_dir(self, target: str) -> Optional[str]:
+        command = (
+            "pwd; "
+            "find /workspaces -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1"
+        )
+        result = self._ssh(target, command, timeout=30)
+        if result.returncode != 0:
+            return None
+        for line in reversed([line.strip() for line in result.stdout.splitlines() if line.strip()]):
+            if line.startswith("/workspaces/"):
+                return line
+        return None
+
+    def _remote_python(self, script: str, payload: Dict[str, Any]) -> str:
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        pythonpath = self._remote_shell_path(self.config.remote_agent_dir)
+        remote_command = (
+            f"CLAW_SKIP_RATE_LIMIT=1 PYTHONPATH={pythonpath} "
+            f"{shlex.quote(self.config.python)} -c {shlex.quote(script)} {shlex.quote(encoded)}"
+        )
+        result = self._ssh(self.config.ssh_target or "", remote_command, timeout=self.config.timeout_seconds)
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout or f"ssh exited {result.returncode}").strip())
+        output = result.stdout.strip()
+        if not output:
+            raise RuntimeError("Remote command returned no output")
+        return output.splitlines()[-1]
+
+    def _run_terminal(self, tool_input: Dict[str, Any]) -> str:
+        command = str(tool_input.get("command", "")).strip()
+        if not command:
+            return json.dumps({"status": "error", "error": "Missing command"})
+        timeout = int(tool_input.get("timeout", 14400))
+        remote_command = f"cd {shlex.quote(self.config.remote_dir)} && {command}"
+        try:
+            result = self._ssh(self.config.ssh_target or "", remote_command, timeout=max(1, timeout))
+            return json.dumps(
+                {
+                    "status": "ok" if result.returncode == 0 else "error",
+                    "workspace": "ssh",
+                    "host": self.config.ssh_target,
+                    "result": {
+                        "command": command,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "returncode": result.returncode,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "workspace": "ssh",
+                    "host": self.config.ssh_target,
+                    "result": {
+                        "command": command,
+                        "stdout": exc.stdout or "",
+                        "stderr": f"Command timed out after {timeout} seconds.",
+                        "returncode": 124,
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+    @staticmethod
+    def _ssh(target: str, command: str, timeout: int) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["ssh", target, command],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+
+    @staticmethod
+    def _remote_shell_path(path: str) -> str:
+        if path.startswith("~/"):
+            return "$HOME/" + shlex.quote(path[2:])
+        return shlex.quote(path)
+
+    @staticmethod
+    def host_in_ssh_config(target: str) -> bool:
+        if not SSH_CONFIG_PATH.exists():
+            return False
+        text = SSH_CONFIG_PATH.read_text(encoding="utf-8", errors="ignore")
+        for line in text.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0].lower() == "host" and target in parts[1:]:
+                return True
+        return False
+
+    @staticmethod
+    def write_managed_ssh_config(config_text: str) -> None:
+        SSH_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        existing = SSH_CONFIG_PATH.read_text(encoding="utf-8") if SSH_CONFIG_PATH.exists() else ""
+        pattern = re.compile(
+            rf"\n?{re.escape(SSH_MARKER_START)}.*?{re.escape(SSH_MARKER_END)}\n?",
+            re.DOTALL,
+        )
+        cleaned = pattern.sub("\n", existing).rstrip()
+        block = f"{SSH_MARKER_START}\n{config_text.strip()}\n{SSH_MARKER_END}\n"
+        SSH_CONFIG_PATH.write_text((cleaned + "\n\n" + block).lstrip(), encoding="utf-8")
+        try:
+            os.chmod(SSH_CONFIG_PATH, 0o600)
+        except OSError:
+            pass
+
+
+def normalize_model_name(model: str) -> str:
+    return " ".join(str(model).strip().split())
+
+
+def parse_codespace_target(value: str) -> Optional[str]:
+    text = value.strip()
+    if not text:
+        return None
+    if text.startswith("ssh "):
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            parts = text.split()
+        for part in reversed(parts[1:]):
+            if not part.startswith("-") and "=" not in part:
+                return part
+    parsed = urlparse(text)
+    if parsed.scheme:
+        query = parse_qs(parsed.query)
+        name = (query.get("name") or query.get("codespace") or [None])[0]
+        if name:
+            return name if name.startswith("cs.") else f"cs.{name}"
+        path_name = parsed.path.rstrip("/").split("/")[-1]
+        if path_name:
+            return path_name if path_name.startswith("cs.") else f"cs.{path_name}"
+    if re.match(r"^[A-Za-z0-9_.@-]+$", text):
+        return text
+    return None

@@ -180,6 +180,9 @@ function collectGlobalOptions(args) {
     [["--db", "--db-path"], "--db-path"],
     [["--collection"], "--collection"],
     [["--graph", "--knowledge-graph-path"], "--knowledge-graph-path"],
+    [["--workspace-mode"], "--workspace-mode"],
+    [["--workspace-ssh"], "--workspace-ssh"],
+    [["--workspace-remote-dir"], "--workspace-remote-dir"],
   ];
 
   for (const [aliases, target] of mappings) {
@@ -200,6 +203,9 @@ function stripKnownOptions(args) {
     "--collection",
     "--graph",
     "--knowledge-graph-path",
+    "--workspace-mode",
+    "--workspace-ssh",
+    "--workspace-remote-dir",
     "--top-k",
     "--depth",
     "--language",
