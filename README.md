@@ -6,7 +6,7 @@
 #### Claw coder has access to knowledge graph which means it can ingest files and directories and actually map them and understand what each part does to the other without even needing powerful GPUs and the knowledge graph is lightweight which means it runs completely on you laptop
 
 ![claw chat displayed](screenshoot1.png) 
-> - Claw coder has access to tree-sitter + RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
+> - Claw coder has access to tree-sitter     dss+ RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
 > 
 > - Claw coder also has access to tools the elevate its power with real codebases:

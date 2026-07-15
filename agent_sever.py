@@ -32,7 +32,7 @@ DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", os.getenv("DODO_P
 DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CREDITS_PER_PURCHASE", "100")))
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
 DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "100"))
-DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://silent-navigator-dreamlike.ngrok-free.dev/payment-success")
+DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder2.onrender.com")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment")
@@ -55,17 +55,17 @@ TOOL_LIMITS: dict[str, int] = {
     "search_stuff":           10,   # Tavily API costs per search
 
     # heavy compute — Docker containers, embeddings
-    "execute_code_in_docker": 20,   # Docker sandbox runs
-    "ingest_paths_knowledge": 15,   # heavy: tree-sitter + embeddings on whole dirs
-    "ingest_code_knowledge":  20,   # tree-sitter + embeddings
+    "execute_code_in_docker": 10,   # Docker sandbox runs
+    "ingest_paths_knowledge": 12,   # heavy: tree-sitter + embeddings on whole dirs
+    "ingest_code_knowledge":  5,   # tree-sitter + embeddings
     "ingest_pdf_knowledge":   10,   # PDF parsing + embeddings
 
     # RAG searches — embedding API calls
-    "search_knowledge_base":  50,   # ChromaDB + embedding query
-    "search_knowledge_graph": 50,   # graph traversal
+    "search_knowledge_base":  20,   # ChromaDB + embedding query
+    "search_knowledge_graph": 20,   # graph traversal
 
     # run tests in docker
-    "run_tests":              15,   # Docker container per run
+    "run_tests":              5,   # Docker container per run
 }
 
 # Pro tier — unlimited everything

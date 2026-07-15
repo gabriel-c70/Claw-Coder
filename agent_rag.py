@@ -81,7 +81,7 @@ except ImportError:
 load_dotenv()
 
 RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder2.onrender.com")
-RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "30"))
+RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "40"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -2079,29 +2079,6 @@ class Agent:
             "stdout": result.stdout[-2000:],  # same fix
             "stderr": result.stderr[-2000:],
         })
-    def get_env(self, key: str) -> str:
-        value = os.getenv(key)
-        if not value:
-            raise ValueError(f"Missing env var: {key}")
-        return value
-    def search_info(self, query: str, max_results: int = 5) -> Dict[str, Any]:
-        try:
-            tavily = TavilyClient(api_key=self.get_env("TAVILY_API_KEY"))
-            response = tavily.search(
-                query=query,
-                max_results=max_results,
-                search_depth="advanced",
-            )
-            results = []
-            for item in response["results"]:
-                results.append({
-                    "title": item["title"],
-                    "url": item["url"],
-                    "content": item["content"][:1000],
-                })
-            return json.dumps({"success": True, "results": results})
-        except Exception as exc:
-            return json.dumps({"success": False, "error": str(exc)})
 
     def _search_stuff_tool(self, tool_input: Dict[str, Any]) -> str:
         query = str(tool_input.get("query", "")).strip()
@@ -2358,7 +2335,7 @@ class Agent:
                 "type": "shell",
             },
             "typescript" : {
-                "image": "node:22-silm",
+                "image": "node:22-slim",
                 "filename": "main.ts",
                 "build": "npm install -g ts-node typescript",
                 "run": "ts-node /sandbox/main.sh",
@@ -2784,6 +2761,77 @@ class Agent:
             return json.dumps({"status": "error", "error": f"Unknown memory action: {action}"})
         return json.dumps({"status": "ok", "memories": self.memory[-limit:]}, ensure_ascii=False)
 
+    def _check_plan_access(self, feature_name: str) -> Optional[str]:
+        """
+        Returns None if the user's plan allows this feature, or an error
+        string if not. Unlike _check_rate_limit (which tracks usage counts
+        per tool call), this is a flat yes/no gate — meant for features like
+        /workspace that should be paid-only regardless of how many times
+        they're used.
+        """
+        import json as _json
+        import urllib.request as _req
+        import urllib.error
+        import ssl
+
+        session_path = Path.home() / ".claw-coder" / "session.json"
+        if not session_path.exists():
+            return "This feature requires a paid plan. Run: claw login, then claw buy"
+
+        try:
+            session = _json.loads(session_path.read_text(encoding="utf-8"))
+            token = session.get("access_token", "")
+            if not token:
+                return "This feature requires a paid plan. Run: claw login, then claw buy"
+        except Exception:
+            return "Could not read your saved session. Run: claw login"
+
+        ssl_context = ssl.create_default_context()
+        try:
+            import certifi
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            pass
+
+        request = _req.Request(
+            f"{RATE_LIMIT_API_URL}/plan",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        try:
+            with _req.urlopen(request, timeout=RATE_LIMIT_TIMEOUT_SECONDS, context=ssl_context) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+                plan = data.get("plan", "free")
+                if plan == "free":
+                    return (
+                        f"{feature_name} is a paid feature. "
+                        "Run `claw buy` to subscribe, or `claw credits` to check your plan."
+                    )
+                return None  # paid plan, allowed
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return "Session expired. Run: claw login"
+            return f"Could not verify your plan (server returned {exc.code}). Try again in a moment."
+        except Exception as exc:
+            return (
+                f"Could not verify your plan: {exc}. "
+                "Render free services can take a while to wake up; wait a few seconds and retry."
+            )
+    def setup_workspace_from_paste(self, pasted: str) -> str:
+        if not self.remote_workspace:
+            return "Workspace mode is unavailable because workspace.py could not be imported."
+
+        access_error = self._check_plan_access("Workspace mode")
+        if access_error:
+            return access_error
+
+        result = self.remote_workspace.setup_from_paste(pasted, Path(__file__).resolve().parent)
+        if self.remote_workspace.active:
+            self.workspace_mode = "ssh"
+            if self.model:
+                pull_result = self.remote_workspace.pull_model(self.model)
+                result = f"{result}\nCurrent model: {pull_result}"
+        return result
     def chat(self, user_input: str) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []
@@ -2925,7 +2973,6 @@ def ingest_session_documents(agent: Agent, paths: Iterable[str]) -> None:
         except json.JSONDecodeError:
             print_status(result)
 
-
 def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = None) -> None:
     set_terminal_title("Claw Coder")
     print_banner(agent.model, agent.embedding_model)
@@ -2955,7 +3002,13 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             if user_input.lower().startswith("/model "):
                 print_status(agent.switch_model(user_input.split(" ", 1)[1].strip()))
                 continue
+
+
             if user_input.lower().startswith("/workspace"):
+                access_error = agent._check_plan_access("/workspace")
+                if access_error:
+                    print_error(access_error)
+                    continue
                 parts = user_input.split(maxsplit=2)
                 if len(parts) == 1:
                     target = prompt_workspace_target()
@@ -2980,7 +3033,11 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                     if not agent.remote_workspace:
                         print_error("Workspace mode is unavailable because workspace.py could not be imported.")
                     else:
-                        print_status(agent.remote_workspace.pull_model(parts[2].strip()))
+                        access_error = agent._check_plan_access("Workspace mode")
+                        if access_error:
+                            print_error(access_error)
+                        else:
+                            print_status(agent.remote_workspace.pull_model(parts[2].strip()))
                 else:
                     print_status("Usage: /workspace | /workspace status | /workspace local | /workspace pull <model>")
                 continue

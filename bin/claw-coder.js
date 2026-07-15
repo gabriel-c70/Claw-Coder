@@ -781,7 +781,7 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    console.log("Creating checkout for the $30/month Claw Coder plan...");
+    console.log("Creating checkout for the $14.99/month Claw Coder plan...");
     apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({}) })
       .then((data) => {
         if (!data.checkout_url) {
@@ -861,7 +861,7 @@ function main() {
   const KNOWN_COMMANDS = new Set([
     "chat", "models", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
-    "setup", "doctor", "raw", "embedding","usage", "credits", "buy", "topup"
+    "setup", "doctor", "raw", "embedding","usage", "credits", "buy", "topup-> beta"
   ]);
 
   if (!KNOWN_COMMANDS.has(command)) {

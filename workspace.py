@@ -127,13 +127,20 @@ class WorkspaceRemoteClient:
             "Chat, model pulls, and coding tools are running remotely."
         )
 
-    def setup_from_paste(self, pasted: str, package_root: Path) -> str:
+    def setup_from_paste(self, pasted: str, package_root: Path, on_status: Optional[Any] = None) -> str:
+        def status(msg: str) -> None:
+            if on_status:
+                on_status(msg)
+
         target = parse_codespace_target(pasted)
         if not target:
             return "Could not find an SSH host in that input. Paste something like: ssh cs.your-codespace-name"
 
+        status(f"Configuring SSH for {target}...")
         config_message = self.ensure_ssh_config(target)
-        verify = self._ssh(target, "printf claw-workspace-ready", timeout=14400)
+
+        status("Testing connection...")
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=20)  # was 14400 — tightened
         if verify.returncode != 0:
             return (
                 f"SSH config step: {config_message}\n"
@@ -143,20 +150,28 @@ class WorkspaceRemoteClient:
 
         self.config.mode = "ssh"
         self.config.ssh_target = target
+
+        status("Locating your project directory...")
         discovered = self.discover_workspace_dir(target)
         if discovered:
             self.config.remote_dir = discovered
 
+        status("Syncing Claw-Coder to the remote...")
         copied = self.sync_backend(package_root)
-        prepared = self.prepare_remote()
+
+        status("Installing dependencies and setting up Ollama...")
+        prepared = self.prepare_remote(on_status=status)
+
         return (
             f"Connected to {target}\n"
             f"SSH config: {config_message}\n"
             f"Remote workspace: {self.config.remote_dir}\n"
             f"Backend: {copied}\n"
             f"Dependencies: {prepared}\n"
-            "Workspace mode is on. Continue interacting with claw-coder normally; model pulls and coding work run on the Codespace."
+            "Workspace mode is on."
         )
+
+
 
     def ensure_ssh_config(self, target: str) -> str:
         if self.host_in_ssh_config(target):
@@ -196,7 +211,7 @@ class WorkspaceRemoteClient:
         if not self.active:
             return []
         script = "import json, ollama; print(json.dumps(ollama.list(), default=lambda o: getattr(o, '__dict__', str(o))))"
-        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=14400)
+        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=35)
         if result.returncode != 0 or not result.stdout.strip():
             return []
         try:
@@ -271,49 +286,100 @@ class WorkspaceRemoteClient:
             return (result.stderr or result.stdout or "copy failed").strip()
         return f"synced to {self.config.remote_agent_dir}"
 
-    def prepare_remote(self) -> str:
+    def prepare_remote(self, on_status: Optional[Any] = None) -> str:
+        def status(msg: str) -> None:
+            if on_status:
+                on_status(msg)
+
+        target = self.config.ssh_target or ""
         remote_agent_dir = self._remote_shell_path(self.config.remote_agent_dir)
-        command = (
+
+        # 1. Python deps
+        status("Installing Python dependencies on the remote...")
+        pip_cmd = (
             f"cd {remote_agent_dir} && "
-            f"{shlex.quote(self.config.python)} -m pip install --user -r requirements.txt >/tmp/claw-coder-pip.log 2>&1 || true && "
-            "command -v ollama >/dev/null && printf ready || printf 'ollama missing'"
+            f"{shlex.quote(self.config.python)} -m pip install --user -r requirements.txt "
+            f">/tmp/claw-coder-pip.log 2>&1"
         )
-        result = self._ssh(self.config.ssh_target or "", command, timeout=7200)
-        return (result.stdout or result.stderr or "prepared").strip()
+        pip_result = self._ssh(target, pip_cmd, timeout=300)
+        pip_status = "ok" if pip_result.returncode == 0 else "pip install failed, see /tmp/claw-coder-pip.log on remote"
+
+        # 2. Ollama binary
+        has_ollama = self._ssh(target, "command -v ollama >/dev/null && printf yes || printf no", timeout=15)
+        if has_ollama.stdout.strip() != "yes":
+            status("Installing Ollama on the remote...")
+            install = self._ssh(target, "curl -fsSL https://ollama.com/install.sh | sh", timeout=180)
+            if install.returncode != 0:
+                return f"deps: {pip_status}; ollama install failed: {(install.stderr or install.stdout)[-500:].strip()}"
+
+        # 3. Ollama daemon running?
+        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=15)
+        if is_running.stdout.strip() != "yes":
+            status("Starting ollama serve on the remote...")
+            self._ssh(target, "nohup ollama serve > /tmp/ollama.log 2>&1 & sleep 3; printf started", timeout=20)
+
+        return f"deps: {pip_status}; ollama: installed and running"
 
     def discover_workspace_dir(self, target: str) -> Optional[str]:
-        command = (
-            "pwd; "
-            "find /workspaces -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1"
-        )
-        result = self._ssh(target, command, timeout=30)
-        if result.returncode != 0:
-            return None
-        for line in reversed([line.strip() for line in result.stdout.splitlines() if line.strip()]):
-            if line.startswith("/workspaces/"):
-                return line
-        return None
+        """
+        Tries several conventions in order, since not every remote follows
+        Codespaces' /workspaces/<repo> layout — keeping this provider-agnostic
+        now means adding RunPod (or anything else) later doesn't require
+        rewriting this logic, just adding another candidate root.
+        """
+        candidate_roots = [
+            "/workspaces",  # GitHub Codespaces convention
+            "/workspace",  # common in many cloud dev-container / GPU-pod images (singular)
+            "/root",  # common default working dir on bare GPU pods (e.g. RunPod)
+            "$HOME",  # universal fallback
+            "/mycodeenvironment"
+        ]
 
-    def _remote_python(self, script: str, payload: Dict[str, Any]) -> str:
-        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-        pythonpath = self._remote_shell_path(self.config.remote_agent_dir)
-        remote_command = (
-            f"CLAW_SKIP_RATE_LIMIT=1 PYTHONPATH={pythonpath} "
-            f"{shlex.quote(self.config.python)} -c {shlex.quote(script)} {shlex.quote(encoded)}"
-        )
-        result = self._ssh(self.config.ssh_target or "", remote_command, timeout=self.config.timeout_seconds)
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or f"ssh exited {result.returncode}").strip())
-        output = result.stdout.strip()
-        if not output:
-            raise RuntimeError("Remote command returned no output")
-        return output.splitlines()[-1]
+        for root in candidate_roots:
+            command = f"find {root} -mindepth 1 -maxdepth 1 -type d 2>/dev/null"
+            result = self._ssh(target, command, timeout=15)
+            if result.returncode != 0:
+                continue
+            candidates = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            if not candidates:
+                continue
+
+            if len(candidates) == 1:
+                return candidates[0]
+
+            # Multiple candidates under this root — prefer the one that's a real git repo.
+            git_check = self._ssh(
+                target,
+                " ; ".join(
+                    f"test -d {shlex.quote(c + '/.git')} && printf '%s\\n' {shlex.quote(c)}" for c in candidates),
+                timeout=15,
+            )
+            git_dirs = [line.strip() for line in git_check.stdout.splitlines() if line.strip()]
+            if len(git_dirs) == 1:
+                return git_dirs[0]
+
+            # Still ambiguous — Codespaces sets $RepositoryName; use it if it matches.
+            repo_env = self._ssh(target, "echo $RepositoryName", timeout=15)
+            repo_name = repo_env.stdout.strip()
+            if repo_name:
+                for c in candidates:
+                    if c.rsplit("/", 1)[-1] == repo_name:
+                        return c
+
+            # Deterministic fallback rather than an arbitrary `head -n 1` pick.
+            return sorted(candidates)[0]
+
+        # Nothing matched any known convention — caller falls back to $HOME itself
+        # or asks the user for an explicit path.
+        home_check = self._ssh(target, "echo $HOME", timeout=15)
+        home_dir = home_check.stdout.strip()
+        return home_dir or None
 
     def _run_terminal(self, tool_input: Dict[str, Any]) -> str:
         command = str(tool_input.get("command", "")).strip()
         if not command:
             return json.dumps({"status": "error", "error": "Missing command"})
-        timeout = int(tool_input.get("timeout", 14400))
+        timeout = int(tool_input.get("timeout", 35))
         remote_command = f"cd {shlex.quote(self.config.remote_dir)} && {command}"
         try:
             result = self._ssh(self.config.ssh_target or "", remote_command, timeout=max(1, timeout))

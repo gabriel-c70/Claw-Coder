@@ -14,3 +14,6 @@
 2026-06-04 15:27:15,376 - Rate limit server unreachable (The read operation timed out)
 2026-06-04 15:27:31,878 - Rate limit: run_tests — 1/15 used this month (14 remaining) [free plan, monthly]
 2026-06-04 15:27:31,880 - Tool failed: 'image'
+2026-07-14 22:13:32,074 - Rate limit server unreachable (The read operation timed out)
+2026-07-14 22:14:02,173 - Rate limit: ingest_pdf_knowledge — 1/10 used this month (9 remaining) [free plan, monthly]
+2026-07-14 22:16:06,395 - Rate limit: ingest_pdf_knowledge — 2/10 used this month (8 remaining) [free plan, monthly]
