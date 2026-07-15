@@ -1,6 +1,6 @@
 {
   "name": "claw-coder",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Claw coder is a local first AI agent that turns local coding small LLMs into powerful AI agents that actually work",
   "type": "commonjs",
   "bin": {
