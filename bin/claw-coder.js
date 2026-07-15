@@ -390,7 +390,7 @@ function runDoctor() {
 }
 
 function getApiUrl() {
-  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder2.onrender.com").replace(/\/$/, "");
+  return (process.env.RATE_LIMIT_API_URL || "https://silent-navigator-dreamlike.ngrok-free.dev").replace(/\/$/, "");
 }
 
 async function apiFetch(pathname, session, options = {}) {

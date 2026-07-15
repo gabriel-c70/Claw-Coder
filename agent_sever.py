@@ -32,7 +32,7 @@ DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", os.getenv("DODO_P
 DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CREDITS_PER_PURCHASE", "100")))
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
 DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "100"))
-DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder2.onrender.com")
+DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://silent-navigator-dreamlike.ngrok-free.dev")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment")
