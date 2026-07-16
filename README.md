@@ -58,30 +58,30 @@ claw setup
 ---
 For development, use a symlink instead:
 
-```bash
-npm link
-claw setup
-```
 ---
-- `claw setup` installs the Python dependencies from 
-  - `requirements.txt`. You also
-need Ollama running for chat, embeddings, and vector RAG:
+> TIP
+> 
+> - `claw setup` installs the Python dependencies from 
+> 
+> - `requirements.txt`. 
+Ollama shall start running for every chat and after claw setup, embeddings, and vector RAG:
 ---
 ```bash
-ollama serve
+ollama serve for old versions of claw-coder but its not needed for new versions for it is initialized automatically after claw-chat.
 claw <model>
 claw <chat model> <embedding modal>
+the code you see above is for claw-coder old versions but is still functional but not needed for the claw-coder experience
 ```
 ---
-## Use
+## Usage
 
 ```bash
-claw doctor
-claw languages
-claw ingest .
-claw graph "tree_sitter imports" 
-claw search "where is graph reranking implemented?" --top-k 5
-claw chat
+claw doctor # checks whether everything is all set
+claw languages # displays languages supported by claw-coder's tree sitter ability
+claw ingest . # ingests the contents of the current directory into the knowledge graph
+claw graph "tree_sitter imports" # gets info from the knowledge graph and search for imports of tree-sitter used in a project
+claw search "where is graph reranking implemented?" --top-k 5 # this does the same but goes in depth
+claw chat # this activates an ollama serve in the background and checks whether its on and then makes claw-coder work as nowmal
 ```
 - This is a screenshot of claw --help with all the commands displayed
 
@@ -117,6 +117,11 @@ Sign in and log in:
 claw login
 ```
 ---
+## Caution:
+```bash
+claw chat  # in the latest version includes a new workspace feature that is mostly a paid feature
+# most of the tools are limited and are paid for to unlock the limit for a month
+```
 > Source Code: [claw-coder](https://github.com/gabriel-c70/Claw-Coder.git) 
 >
 > You can also contribute and make [claw-coder](https://github.com/gabriel-c70/Claw-Coder.git) the best AI agent ever created by just contributing a line of code.

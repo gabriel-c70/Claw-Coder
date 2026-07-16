@@ -519,7 +519,7 @@ def create_checkout(body: CheckoutRequest, authorization: str = Header(...)):
         "checkout_url": checkout.get("checkout_url"),
         "session_id": session_id,
         "credits": credits,
-        "price_usd": 10,
+        "price_usd": 14.99,
         "billing": billing,
     }
 

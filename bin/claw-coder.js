@@ -488,14 +488,14 @@ function installOllama() {
 
 function startOllamaServe() {
   if (isOllamaRunning()) {
-    console.log("Ollama is already running.");
+    console.log("Ollama is already up and running.");
     return true;
   }
   if (!commandExists("ollama")) {
     console.error("Ollama isn't installed - cannot start it. Run `claw setup` first.");
     return false;
   }
-  console.log("Initializing 🦙 ollama in the unseen......");
+  console.log("Initializing 🦙  ollama in the unseen......");
   const proc = spawn("ollama", ["serve"], {
     detached: true,
     stdio: "ignore"
@@ -505,7 +505,7 @@ function startOllamaServe() {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     sleepSync(500);
     if (isOllamaRunning()) {
-      console.log("Ollama is behaving.");
+      console.log("Ollama is behaving.....");
       return true;
     }
   }
