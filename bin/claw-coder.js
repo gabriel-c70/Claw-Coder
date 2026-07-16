@@ -509,6 +509,7 @@ function startOllamaServe() {
       return true;
     }
   }
+
   console.warn("Ollama may still be starting up - if `claw chat` fails to connect, relax for a few seconds and then try again.");
   return true;
 }
