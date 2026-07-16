@@ -33,7 +33,7 @@ DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", os.getenv("DODO_P
 DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CREDITS_PER_PURCHASE", "100")))
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
 DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "100"))
-DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder-1-bhat.onrender.com")
+DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder-3.onrender.com")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment")
@@ -77,11 +77,6 @@ PRO_LIMIT = 999_999
 # run_terminal, manage_memory, manage_plan, git_diff, git_status,
 # apply_patch, git_apply_patch, gnu_patch, extract_functions,
 # open_default_browser, search_code, ask_user
-
-dodo_client = DodoPayments(
-    bearer_token=DODO_PAYMENTS_API_KEY,
-    environment="test_mode",
-)
 
 def month_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
@@ -348,7 +343,7 @@ def dodo_request(path: str, payload: dict) -> dict:
             "Authorization": f"Bearer {DODO_PAYMENTS_API_KEY}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "claw-coder-server/1.0 (+https://claw-coder-1-bhat.onrender.com)",
+            "User-Agent": "claw-coder-server/1.0 (+https://claw-coder-3.onrender.com)",
         },
         method="POST",
     )
