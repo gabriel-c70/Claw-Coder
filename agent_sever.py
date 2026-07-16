@@ -34,7 +34,6 @@ DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CRE
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
 DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "200"))
 DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder-3.onrender.com")
-DODO_WEBHOOK_URL = os.getenv("DODO_WEBHOOK_URL", "")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment")
@@ -567,7 +566,7 @@ def create_checkout(body: CheckoutRequest, authorization: str = Header(...)):
     }
 
 
-@app.post(f"{DODO_WEBHOOK_URL}/webhooks/dodo")
+@app.post("/webhooks/dodo")
 async def dodo_webhook(
     request: Request,
     webhook_id: str = Header("", alias="webhook-id"),
