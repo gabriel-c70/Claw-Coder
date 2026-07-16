@@ -390,7 +390,7 @@ function runDoctor() {
 }
 
 function getApiUrl() {
-  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder-1-bhat.onrender.com").replace(/\/$/, "");
+  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder-3.onrender.com").replace(/\/$/, "");
 }
 
 async function apiFetch(pathname, session, options = {}) {
