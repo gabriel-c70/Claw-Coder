@@ -26,11 +26,28 @@ function loadEnvFile() {
 
 function getSupabaseConfig() {
   loadEnvFile();
+
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const githubClientId = process.env.GITHUB_CLIENT_ID;
+
+  const missing = [];
+  if (!url) missing.push("SUPABASE_URL");
+  if (!anonKey) missing.push("SUPABASE_ANON_KEY");
+  if (!githubClientId) missing.push("GITHUB_CLIENT_ID");
+
+  if (missing.length) {
+    throw new Error(
+      `Missing required .env values: ${missing.join(", ")}.\n` +
+      "Add them to your .env file before running claw login."
+    );
+  }
+
   return {
-    url:            process.env.SUPABASE_URL      || BAKED_CONFIG.supabaseUrl,
-    anonKey:        process.env.SUPABASE_ANON_KEY || BAKED_CONFIG.anonKey,
-    serviceKey:     process.env.SUPABASE_SERVICE_KEY || null,
-    githubClientId: process.env.GITHUB_CLIENT_ID  || BAKED_CONFIG.githubClientId,
+    url,
+    anonKey,
+    serviceKey: process.env.SUPABASE_SERVICE_KEY || null,
+    githubClientId,
   };
 }
 
