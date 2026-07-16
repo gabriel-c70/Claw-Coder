@@ -20,3 +20,4 @@ supabase
 tavily-python
 certifi
 rich>=13.7
+dodopayments

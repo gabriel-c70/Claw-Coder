@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from supabase import create_client, Client
 import urllib.request
 import urllib.error
+from dodopayments import DodoPayments
 
 load_dotenv()
 
@@ -77,6 +78,10 @@ PRO_LIMIT = 999_999
 # apply_patch, git_apply_patch, gnu_patch, extract_functions,
 # open_default_browser, search_code, ask_user
 
+dodo_client = DodoPayments(
+    bearer_token=DODO_PAYMENTS_API_KEY,
+    environment="test_mode",
+)
 
 def month_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
@@ -342,6 +347,8 @@ def dodo_request(path: str, payload: dict) -> dict:
         headers={
             "Authorization": f"Bearer {DODO_PAYMENTS_API_KEY}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "claw-coder-server/1.0 (+https://claw-coder-1-bhat.onrender.com)",
         },
         method="POST",
     )
