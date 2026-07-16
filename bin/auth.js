@@ -7,12 +7,7 @@ const path = require("node:path");
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
 
-// ── Baked-in config — users need zero setup ───────────────────────────────────
-const BAKED_CONFIG = {
-  supabaseUrl:    "https://nqbrdafvdfntxvhbyama.supabase.co",
-  anonKey:        "sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
-  githubClientId: "Ov23li6ZYK8WmGloMm90",
-};
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 function loadEnvFile() {

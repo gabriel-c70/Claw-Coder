@@ -2761,28 +2761,17 @@ class Agent:
             return json.dumps({"status": "error", "error": f"Unknown memory action: {action}"})
         return json.dumps({"status": "ok", "memories": self.memory[-limit:]}, ensure_ascii=False)
 
-    def _check_plan_access(self, feature_name: str) -> Optional[str]:
-        """
-        Returns None if the user's plan allows this feature, or an error
-        string if not. Unlike _check_rate_limit (which tracks usage counts
-        per tool call), this is a flat yes/no gate — meant for features like
-        /workspace that should be paid-only regardless of how many times
-        they're used.
-        """
-        import json as _json
-        import urllib.request as _req
-        import urllib.error
-        import ssl
+    def _check_workspace_credits(self) -> Optional[str]:
+        """Consumes WORKSPACE_CONNECT_COST credits via /workspace/connect. Returns error string or None."""
+        import json as _json, urllib.request as _req, urllib.error, ssl
 
         session_path = Path.home() / ".claw-coder" / "session.json"
         if not session_path.exists():
-            return "This feature requires a paid plan. Run: claw login, then claw buy"
-
+            return "Workspace mode requires a paid plan. Run: claw login, then claw buy"
         try:
-            session = _json.loads(session_path.read_text(encoding="utf-8"))
-            token = session.get("access_token", "")
+            token = _json.loads(session_path.read_text(encoding="utf-8")).get("access_token", "")
             if not token:
-                return "This feature requires a paid plan. Run: claw login, then claw buy"
+                return "Workspace mode requires a paid plan. Run: claw login, then claw buy"
         except Exception:
             return "Could not read your saved session. Run: claw login"
 
@@ -2794,34 +2783,27 @@ class Agent:
             pass
 
         request = _req.Request(
-            f"{RATE_LIMIT_API_URL}/plan",
-            headers={"Authorization": f"Bearer {token}"},
-            method="GET",
+            f"{RATE_LIMIT_API_URL}/workspace/connect",
+            data=b"{}", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
         )
         try:
             with _req.urlopen(request, timeout=RATE_LIMIT_TIMEOUT_SECONDS, context=ssl_context) as resp:
-                data = _json.loads(resp.read().decode("utf-8"))
-                plan = data.get("plan", "free")
-                if plan == "free":
-                    return (
-                        f"{feature_name} is a paid feature. "
-                        "Run `claw buy` to subscribe, or `claw credits` to check your plan."
-                    )
-                return None  # paid plan, allowed
+                return None  # allowed, credits consumed
         except urllib.error.HTTPError as exc:
-            if exc.code == 401:
-                return "Session expired. Run: claw login"
-            return f"Could not verify your plan (server returned {exc.code}). Try again in a moment."
+            try:
+                detail = _json.loads(exc.read().decode("utf-8")).get("detail", {})
+                return detail.get("message", "Workspace access denied.")
+            except Exception:
+                return "Workspace access denied."
         except Exception as exc:
-            return (
-                f"Could not verify your plan: {exc}. "
-                "Render free services can take a while to wake up; wait a few seconds and retry."
-            )
+            return f"Could not verify workspace access: {exc}"
+
     def setup_workspace_from_paste(self, pasted: str) -> str:
         if not self.remote_workspace:
             return "Workspace mode is unavailable because workspace.py could not be imported."
 
-        access_error = self._check_plan_access("Workspace mode")
+        access_error = self._check_workspace_credits("Workspace mode")
         if access_error:
             return access_error
 
@@ -3005,7 +2987,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
 
 
             if user_input.lower().startswith("/workspace"):
-                access_error = agent._check_plan_access("/workspace")
+                access_error = agent._check_workspace_credits("/workspace")
                 if access_error:
                     print_error(access_error)
                     continue
@@ -3033,7 +3015,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                     if not agent.remote_workspace:
                         print_error("Workspace mode is unavailable because workspace.py could not be imported.")
                     else:
-                        access_error = agent._check_plan_access("Workspace mode")
+                        access_error = agent._check_workspace_credits("Workspace mode")
                         if access_error:
                             print_error(access_error)
                         else:

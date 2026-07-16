@@ -86,6 +86,20 @@ def get_limit(tool_name: str, plan: str = "free") -> int:
     if plan == "pro":
         return PRO_LIMIT
     return TOOL_LIMITS.get(tool_name, PRO_LIMIT)  # not in limits = unlimited
+TOOL_CREDIT_COSTS: dict[str, int] = {
+    "search_knowledge_base":  8,
+    "search_knowledge_graph": 8,
+    "ingest_code_knowledge":  10,
+    "ingest_pdf_knowledge":   15,
+    "execute_code_in_docker": 15,
+    "search_stuff":           20,
+    "run_tests":              25,
+    "ingest_paths_knowledge": 40,
+}
+WORKSPACE_CONNECT_COST = 12
+DODO_MONTHLY_TOOL_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", "1000"))
+DODO_MONTHLY_WORKSPACE_CREDITS = int(os.getenv("DODO_MONTHLY_WORKSPACE_CREDITS", "100"))
+
 
 def verify_token(authorization: str) -> str:
     """Accept both Supabase JWT and GitHub access tokens."""
@@ -162,11 +176,12 @@ def get_user_plan(user_id: str) -> str:
     return "free"
 
 
-def get_credit_balance(user_id: str) -> int:
+def get_credit_balance(user_id: str, bucket: str = "tools") -> int:
     result = (
         supabase.table("credit_balances")
         .select("balance")
         .eq("user_id", user_id)
+        .eq("bucket", bucket)
         .execute()
     )
     if not result.data:
@@ -174,12 +189,12 @@ def get_credit_balance(user_id: str) -> int:
     return int(result.data[0].get("balance") or 0)
 
 
-def consume_credit(user_id: str, tool_name: str) -> bool:
+def consume_credit(user_id: str, tool_name: str, amount: int, bucket: str = "tools") -> bool:
     """Atomically consume one paid credit. Requires supabase/schema.sql."""
     try:
         result = supabase.rpc(
             "consume_user_credit",
-            {"p_user_id": user_id, "p_tool_name": tool_name, "p_amount": 1},
+            {"p_user_id": user_id, "p_tool_name": tool_name, "p_amount": amount, "p_bucket": bucket},
         ).execute()
         return bool(result.data)
     except Exception as exc:
@@ -192,7 +207,7 @@ def consume_credit(user_id: str, tool_name: str) -> bool:
         ) from exc
 
 
-def grant_credits(user_id: str, amount: int, reason: str, reference_id: str, metadata: dict) -> None:
+def grant_credits(user_id: str, amount: int, reason: str, reference_id: str, metadata: dict, bucket: str = "tools") -> None:
     try:
         supabase.rpc(
             "grant_user_credits",
@@ -202,6 +217,7 @@ def grant_credits(user_id: str, amount: int, reason: str, reference_id: str, met
                 "p_reason": reason,
                 "p_reference_id": reference_id,
                 "p_metadata": metadata,
+                "p_bucket": bucket
             },
         ).execute()
     except Exception as exc:
@@ -261,8 +277,9 @@ def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
     current = result.data[0]["count"] if result.data else 0
 
     if current >= limit:
-        if consume_credit(user_id, tool_name):
-            credits = get_credit_balance(user_id)
+        cost = TOOL_CREDIT_COSTS.get(tool_name, 10)
+        if consume_credit(user_id, tool_name, amount=cost, bucket="tools"):
+            credits = get_credit_balance(user_id, "tools")
             return {
                 "allowed": True,
                 "tool_name": tool_name,
@@ -270,6 +287,7 @@ def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
                 "limit": limit,
                 "remaining": 0,
                 "credits": credits,
+                "credits_spent": cost,
                 "month": mk,
                 "plan": plan,
                 "source": "credits",
@@ -281,7 +299,8 @@ def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
                 "tool": tool_name,
                 "used": current,
                 "limit": limit,
-                "credits": 0,
+                "credits": get_credit_balance(user_id, "tools"),
+                "cost": cost,
                 "month": mk,
                 "message": (
                     f"{tool_name} allows {limit} free calls/month. You've used {current}. "
@@ -422,7 +441,35 @@ def search(body: SearchRequest, authorization: str = Header(...)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
 
+@app.post("/workspace/connect")
+def workspace_connect(authorization: str = Header(...)):
+    user_id = verify_token(authorization)
+    plan = get_user_plan(user_id)
 
+    if plan != "pro":
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "workspace_paid_only",
+                "message": "Workspace mode is a paid feature. Run `claw buy` to subscribe.",
+            },
+        )
+
+    if not consume_credit(user_id, "workspace_connect", amount=WORKSPACE_CONNECT_COST, bucket="workspace"):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "workspace_credits_required",
+                "credits": get_credit_balance(user_id, "workspace"),
+                "cost": WORKSPACE_CONNECT_COST,
+                "message": (
+                    f"Workspace connections cost {WORKSPACE_CONNECT_COST} credits "
+                    f"(you have {get_credit_balance(user_id, 'workspace')}). "
+                    "Run `claw topup` for more, or wait for next month's allotment."
+                ),
+            },
+        )
+    return {"allowed": True, "credits": get_credit_balance(user_id, "workspace")}
 @app.get("/usage")
 def get_usage(authorization: str = Header(...)):
     """Return this month's usage for the logged-in user."""
@@ -557,12 +604,12 @@ async def dodo_webhook(
 
         if event_type in {"subscription.active", "subscription.renewed"}:
             metadata = event_data.get("metadata") or {}
-            credits = int(metadata.get("credits") or DODO_MONTHLY_CREDITS)
+            tool_credits = int(metadata.get("credits") or DODO_MONTHLY_CREDITS)
             subscription_id = event_data.get("subscription_id") or webhook_id
             period_key = event_data.get("next_billing_date") or event_data.get("previous_billing_date") or webhook_id
             grant_credits(
                 user_id,
-                credits,
+                tool_credits,
                 event_type,
                 f"{subscription_id}:{event_type}:{period_key}",
                 payload,
