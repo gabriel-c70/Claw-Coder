@@ -28,56 +28,81 @@ function loadEnvFile() {
 loadEnvFile();
 
 const HELP = `
-Claw Coder
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         🦙 CLAW CODER - AI ASSISTANT                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-Usage:
+📖 USAGE:
   claw <command> [options]
 
-Commands:
-  chat [--pdf <file>...]         Start interactive chat (optionally preload PDFs)
-  models                         List local Ollama models
-  ingest <paths...>              Ingest files/directories into graph + vector RAG
-  ingest-code <file>             Ingest one source file
-  ingest-pdf <file>              Ingest a PDF or text document (.pdf, .txt, .md)
-  search <query>               Search vector RAG with graph reranking
-  graph <query>                Search the knowledge graph only
-  summary                      Show graph node/edge counts
-  languages                    Show Tree-sitter language support
-  setup                        Install Python dependencies for Claw Coder
-  doctor                       Check local Node/Python/Ollama setup
-  usage                        Show this month's cloud tool usage
-  credits                      Show paid credit balance
-  buy                          Subscribe for $30/month credits
-  topup                        Buy extra pay-as-you-go credits
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 💬 CHAT & INTERACTION                                                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  chat [--pdf <file>...]         Start interactive chat (optionally preload   ║
+║                                PDFs)                                        ║
+║  models                         List local Ollama models                     ║
+║  <model-name>                   Start chat with specific Ollama model       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-Common options:
-  --top-k <n>                  Number of results to return
-  --depth <n>                  Graph traversal depth for graph search
-  --graph <file>               Knowledge graph JSON path
-  --db <dir>                   ChromaDB directory
-  --collection <name>          ChromaDB collection
-  --model <name>               Ollama chat model
-  --embedding-model <name>     Ollama embedding model
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 📚 KNOWLEDGE BASE                                                             ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  ingest <paths...>              Ingest files/directories into graph + vector ║
+║                                RAG                                           ║
+║  ingest-code <file>             Ingest one source file                       ║
+║  ingest-pdf <file>              Ingest a PDF or text document (.pdf, .txt,  ║
+║                                .md)                                          ║
+║  search <query>                 Search vector RAG with graph reranking       ║
+║  graph <query>                  Search the knowledge graph only              ║
+║  summary                        Show graph node/edge counts                  ║
+║  languages                      Show Tree-sitter language support            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-Examples:
-  claw setup
-  claw doctor
-  claw ingest .
-  claw graph "imports tree_sitter" --depth 2
-  claw search "where is reranking implemented?" --top-k 5
-  claw chat
-  claw chat --pdf report.pdf --pdf notes.txt
-  claw models
-  claw qwen2.5-coder:7b        Start chat with any local Ollama model
-  claw embedding <model>       Start a model for the embeddings part of the agent
-  login [provider]             Log in via OAuth (default: github)
-  logout                       Clear saved session
-  whoami                       Show current logged-in user
-  usage                        Show usage and remaining free allowance
-  credits                      Show paid credit balance
-  buy                          Open checkout for the $30/month plan
-  topup                        Open checkout for extra credits
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ⚙️  SETUP & CONFIGURATION                                                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  setup                        Install Python dependencies for Claw Coder     ║
+║  doctor                       Check local Node/Python/Ollama setup          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 💳 ACCOUNT & BILLING                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  login [provider]              Log in via OAuth (default: github)            ║
+║  logout                        Clear saved session                           ║
+║  whoami                        Show current logged-in user                    ║
+║  usage                        Show this month's cloud tool usage             ║
+║  credits                      Show paid credit balance                      ║
+║  buy                          Subscribe for $14.99/month Pro plan           ║
+║  topup                        Buy extra pay-as-you-go credits                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 🔧 COMMON OPTIONS                                                             ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  --top-k <n>                    Number of results to return                    ║
+║  --depth <n>                    Graph traversal depth for graph search         ║
+║  --graph <file>                 Knowledge graph JSON path                     ║
+║  --db <dir>                     ChromaDB directory                            ║
+║  --collection <name>            ChromaDB collection                           ║
+║  --model <name>                 Ollama chat model                             ║
+║  --embedding-model <name>       Ollama embedding model                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 📝 EXAMPLES                                                                   ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  claw setup                    Install dependencies                          ║
+║  claw doctor                   Check system setup                            ║
+║  claw ingest .                 Ingest current directory                      ║
+║  claw graph "imports tree" --depth 2    Search knowledge graph              ║
+║  claw search "reranking" --top-k 5       Search with context                 ║
+║  claw chat                     Start interactive chat                        ║
+║  claw chat --pdf report.pdf    Chat with PDF context                        ║
+║  claw qwen2.5-coder:7b         Use specific model                           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+🌐 Visit https://github.com/gabriel-c70/Claw-Coder for more information
 `;
 
 function printHelp() {
@@ -695,56 +720,80 @@ function main() {
     apiFetch("/usage", session)
       .then((data) => {
         const plan = data.plan || "free";
-        console.log(`\n  Claw Coder usage  ${data.month}  ${plan.toUpperCase()} plan`);
-        console.log(`  Paid credits: ${data.credits || 0}\n`);
+        const planEmoji = plan === "pro" ? "⚡" : "🆓";
+        const planColor = plan === "pro" ? "\x1b[1;36m" : "\x1b[1;33m"; // cyan for pro, yellow for free
+        const reset = "\x1b[0m";
+
+        const creditsSpent = data.credits_spent_month || 0;
+        const creditsGranted = data.credits_granted_month || 0;
+        const currentBalance = data.credits || 0;
+        const totalCredits = creditsGranted + currentBalance;
+        const creditUsagePct = totalCredits > 0 ? Math.round((creditsSpent / totalCredits) * 100) : 0;
+
+        console.log(`\n${"═".repeat(54)}`);
+        console.log(`  📊 CLAW CODER USAGE  ${data.month}  ${planEmoji} ${planColor}${plan.toUpperCase()}${reset} PLAN`);
+        console.log(`${"═".repeat(54)}`);
+        console.log(`  💰 Current Balance: ${currentBalance} credits`);
+        console.log(`  📈 Credits This Month: +${creditsGranted}  -${creditsSpent}  (${creditUsagePct}% used)`);
+        console.log(`${"═".repeat(54)}\n`);
 
         const usage = data.usage || {};
         const tools = Object.keys(usage).sort();
 
         if (tools.length === 0) {
-          console.log("  No tools used this month yet.\n");
+          console.log("  🎉 No tools used this month yet.\n");
           return;
         }
 
         // column widths
-        const nameWidth = 32;
+        const nameWidth = 26;
         const barWidth  = 12;
 
-        console.log(
-          `  ${"Tool".padEnd(nameWidth)} ${"Usage".padEnd(barWidth)}  Count     Remaining`
-        );
-        console.log("  " + "─".repeat(nameWidth + barWidth + 22));
+        console.log(`  ${"Tool".padEnd(nameWidth)} ${"Usage".padEnd(barWidth)}  Count      Remaining   %`);
+        console.log("  " + "─".repeat(nameWidth + barWidth + 28));
 
         for (const tool of tools) {
           const { used, limit, remaining } = usage[tool];
-          const isPro = limit >= 999999;
-          const pct   = isPro ? 0 : Math.min(1, used / limit);
+          // For PRO plans, treat 999999 as the soft limit (400) for display purposes
+          // The server should return 400, but if it returns 999999, we'll handle it
+          const effectiveLimit = (plan === "pro" && limit >= 999999) ? 400 : limit;
+          const isUnlimited = limit >= 999999 && plan !== "pro";
+          const pct   = isUnlimited ? 0 : Math.min(1, used / effectiveLimit);
           const filled = Math.round(pct * barWidth);
-          const bar   = isPro
+          const pctStr = isUnlimited ? "N/A" : `${Math.round(pct * 100)}%`;
+          
+          // Color-coded progress bar
+          let barColor = "\x1b[32m"; // green
+          if (pct >= 0.8) barColor = "\x1b[31m"; // red
+          else if (pct >= 0.5) barColor = "\x1b[33m"; // yellow
+          
+          const bar   = isUnlimited
             ? "∞ unlimited  "
-            : "█".repeat(filled).padEnd(barWidth, "░");
+            : `${barColor}█${reset}`.repeat(filled).padEnd(barWidth, "░");
 
-          const countStr    = isPro ? `${used}` : `${used}/${limit}`;
-          const remainStr   = isPro ? "∞" : `${remaining} left`;
+          const countStr    = isUnlimited ? `${used}` : `${used}/${effectiveLimit}`;
+          const remainStr   = isUnlimited ? "∞" : `${Math.max(0, effectiveLimit - used)} left`;
 
-          // warn if over 80%
-          const warn = !isPro && pct >= 0.8 ? " ⚠" : "";
+          // warn if over 80% of soft limit
+          const warn = !isUnlimited && pct >= 0.8 ? " ⚠️" : "";
 
           console.log(
-            `  ${tool.padEnd(nameWidth)} ${bar}  ${countStr.padEnd(10)}${remainStr}${warn}`
+            `  ${tool.padEnd(nameWidth)} ${bar}  ${countStr.padEnd(12)}${remainStr.padEnd(12)}${pctStr.padEnd(6)}${warn}`
           );
         }
 
+        console.log("\n" + "─".repeat(54));
         if (plan === "free") {
-          console.log("\n  Free allowance is used first. After that, paid credits are used.");
-          console.log("  Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
+          console.log("  📝 Free allowance is used first. After that, paid credits are used.");
+          console.log("  🚀 Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
         } else {
-          console.log("\n  All tools unlimited on Pro plan.\n");
+          console.log("  ⚡ Pro plan: Each tool has a soft limit of 400 calls/month.");
+          console.log("  💳 After reaching the soft limit, paid credits are used automatically.\n");
         }
       })
       .catch((err) => {
-        console.error(`Could not fetch usage: ${err.message}`);
-        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        console.error(`❌ Could not fetch usage: ${err.message}`);
+        console.error("⏳ If this is Render free hosting, wait a few seconds and retry.");
         process.exitCode = 1;
       });
     return;
@@ -761,13 +810,39 @@ function main() {
     }
     apiFetch("/plan", session)
       .then((data) => {
-        console.log(`\n  Plan: ${String(data.plan || "free").toUpperCase()}`);
-        console.log(`  Paid credits: ${data.credits || 0}`);
-        console.log("  Limited tools use free monthly allowance first, then paid credits.\n");
+        const plan = String(data.plan || "free").toUpperCase();
+        const planEmoji = plan === "PRO" ? "⚡" : "🆓";
+        const planColor = plan === "PRO" ? "\x1b[1;36m" : "\x1b[1;33m"; // cyan for pro, yellow for free
+        const reset = "\x1b[0m";
+        const credits = data.credits || 0;
+        const creditsSpent = data.credits_spent_month || 0;
+        const creditsGranted = data.credits_granted_month || 0;
+        const usagePct = data.usage_percentage || 0;
+        const totalCredits = creditsGranted + credits;
+
+        console.log(`\n${"═".repeat(50)}`);
+        console.log(`  💳 CREDIT BALANCE  ${planEmoji} ${planColor}${plan}${reset} PLAN`);
+        console.log(`${"═".repeat(50)}`);
+        console.log(`  💰 Available Credits: ${credits}`);
+        console.log(`  📋 Plan: ${planColor}${plan}${reset}`);
+        console.log(`${"─".repeat(50)}`);
+        console.log(`  📈 This Month: +${creditsGranted} granted  -${creditsSpent} spent  (${usagePct}% used)`);
+        console.log(`  📊 Total Available: ${totalCredits} credits`);
+        console.log(`${"─".repeat(50)}`);
+        console.log("  📝 Limited tools use free monthly allowance first,");
+        console.log("  then paid credits are automatically consumed.\n");
+        
+        if (plan === "FREE" && credits < 100) {
+          console.log("  ⚠️ Low credits! Consider upgrading to Pro for more features.");
+          console.log("  🚀 Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
+        } else if (plan === "PRO" && credits < 50) {
+          console.log("  ⚠️ Running low on credits!");
+          console.log("  🚀 Run `claw topup` for extra credits.\n");
+        }
       })
       .catch((err) => {
-        console.error(`Could not fetch credits: ${err.message}`);
-        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        console.error(`❌ Could not fetch credits: ${err.message}`);
+        console.error("⏳ If this is Render free hosting, wait a few seconds and retry.");
         process.exitCode = 1;
       });
     return;
@@ -782,14 +857,25 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    console.log("Creating checkout for the $14.99/month Claw Coder plan...");
+    console.log(`\n${"═".repeat(50)}`);
+    console.log("  🛒 CREATING CHECKOUT FOR PRO SUBSCRIPTION");
+    console.log(`${"═".repeat(50)}`);
+    console.log("  ⚡ Claw Coder Pro Plan - $14.99/month");
+    console.log("  💰 1000 monthly credits included");
+    console.log("  🚀 Unlimited tool usage with soft limits");
+    console.log("  🌐 Workspace mode access");
+    console.log(`${"─".repeat(50)}\n`);
+    
     apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({}) })
       .then((data) => {
         if (!data.checkout_url) {
           throw new Error("The billing server did not return a checkout URL.");
         }
-        console.log(`\n  Monthly credits: ${data.credits}`);
-        console.log(`  Checkout: ${data.checkout_url}\n`);
+        console.log(`  ✅ Checkout created successfully!`);
+        console.log(`  💳 Monthly credits: ${data.credits}`);
+        console.log(`  🔗 Checkout URL: ${data.checkout_url}\n`);
+        console.log("  🌐 Opening checkout page in your browser...\n");
+        
         const opener = process.platform === "darwin" ? "open"
           : process.platform === "win32" ? "start"
           : "xdg-open";
@@ -799,10 +885,13 @@ function main() {
             shell: process.platform === "win32",
           });
         } catch {}
+        
+        console.log("  📝 After payment, your credits will be added automatically.");
+        console.log("  🔄 Run `claw credits` to check your balance after payment.\n");
       })
       .catch((err) => {
-        console.error(`Could not create checkout: ${err.message}`);
-        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        console.error(`❌ Could not create checkout: ${err.message}`);
+        console.error("⏳ If this is Render free hosting, wait a few seconds and retry.");
         process.exitCode = 1;
       });
     return;
@@ -817,14 +906,24 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    console.log("Creating checkout for extra Claw Coder credits...");
+    console.log(`\n${"═".repeat(50)}`);
+    console.log("  💳 CREATING CHECKOUT FOR CREDIT TOP-UP");
+    console.log(`${"═".repeat(50)}`);
+    console.log("  💰 Extra pay-as-you-go credits");
+    console.log("  🚀 No subscription required");
+    console.log("  📦 One-time purchase");
+    console.log(`${"─".repeat(50)}\n`);
+    
     apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({ mode: "topup" }) })
       .then((data) => {
         if (!data.checkout_url) {
           throw new Error("The billing server did not return a checkout URL.");
         }
-        console.log(`\n  Extra credits: ${data.credits}`);
-        console.log(`  Checkout: ${data.checkout_url}\n`);
+        console.log(`  ✅ Checkout created successfully!`);
+        console.log(`  💳 Extra credits: ${data.credits}`);
+        console.log(`  🔗 Checkout URL: ${data.checkout_url}\n`);
+        console.log("  🌐 Opening checkout page in your browser...\n");
+        
         const opener = process.platform === "darwin" ? "open"
           : process.platform === "win32" ? "start"
           : "xdg-open";
@@ -834,10 +933,13 @@ function main() {
             shell: process.platform === "win32",
           });
         } catch {}
+        
+        console.log("  📝 After payment, your credits will be added automatically.");
+        console.log("  🔄 Run `claw credits` to check your balance after payment.\n");
       })
       .catch((err) => {
-        console.error(`Could not create top-up checkout: ${err.message}`);
-        console.error("If this is Render free hosting, wait a few seconds and retry.");
+        console.error(`❌ Could not create top-up checkout: ${err.message}`);
+        console.error("⏳ If this is Render free hosting, wait a few seconds and retry.");
         process.exitCode = 1;
       });
     return;

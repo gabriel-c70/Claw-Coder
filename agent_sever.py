@@ -69,8 +69,9 @@ TOOL_LIMITS: dict[str, int] = {
     "run_tests":              5,   # Docker container per run
 }
 
-# Pro tier — unlimited everything
+# Pro tier — soft limit per tool (can be exceeded with credits)
 PRO_LIMIT = 999_999
+PRO_SOFT_LIMIT = 400
 
 # Tools NOT in TOOL_LIMITS run unlimited for everyone (they're purely local)
 # read_files, list_files, edit_file, create_file, delete_file,
@@ -84,7 +85,7 @@ def month_key() -> str:
 
 def get_limit(tool_name: str, plan: str = "free") -> int:
     if plan == "pro":
-        return PRO_LIMIT
+        return PRO_SOFT_LIMIT  # Soft limit for PRO plans
     return TOOL_LIMITS.get(tool_name, PRO_LIMIT)  # not in limits = unlimited
 TOOL_CREDIT_COSTS: dict[str, int] = {
     "search_knowledge_base":  8,
@@ -258,7 +259,8 @@ def user_id_from_metadata(data: dict) -> str | None:
 
 def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
     """Check limit and increment counter. Returns usage info."""
-    # tools not in TOOL_LIMITS are free/unlimited
+    # tools not in TOOL_LIMITS are free/unlimited for free plans
+    # but PRO plans have soft limits for all tools
     if tool_name not in TOOL_LIMITS and plan != "pro":
         return {"allowed": True, "used": 0, "limit": PRO_LIMIT, "remaining": PRO_LIMIT}
 
@@ -303,8 +305,8 @@ def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
                 "cost": cost,
                 "month": mk,
                 "message": (
-                    f"{tool_name} allows {limit} free calls/month. You've used {current}. "
-                    "Run `claw buy` to subscribe or `claw topup` to buy extra pay-as-you-go credits."
+                    f"{tool_name} allows {limit} calls/month on {plan.upper()} plan. You've used {current}. "
+                    "Run `claw topup` to buy extra pay-as-you-go credits."
                 ),
             },
         )
@@ -500,16 +502,64 @@ def get_usage(authorization: str = Header(...)):
             "remaining": max(0, lim - row["count"]),
         }
 
-    # show all limited tools even if unused
-    for tool, lim in TOOL_LIMITS.items():
-        if tool not in usage:
+    # For PRO plans, show soft limits for all tools that have been used
+    # For free plans, only show tools in TOOL_LIMITS with their specific limits
+    if plan == "pro":
+        # For PRO plans, apply soft limits to all tools that have been used
+        for tool in list(usage.keys()):
+            used = usage[tool]["used"]
             usage[tool] = {
-                "used":      0,
-                "limit":     get_limit(tool, plan),
-                "remaining": get_limit(tool, plan),
+                "used":      used,
+                "limit":     PRO_SOFT_LIMIT,
+                "remaining": max(0, PRO_SOFT_LIMIT - used),
             }
+        # Also add soft limit entries for all limited tools even if unused
+        for tool in TOOL_LIMITS.keys():
+            if tool not in usage:
+                usage[tool] = {
+                    "used":      0,
+                    "limit":     PRO_SOFT_LIMIT,
+                    "remaining": PRO_SOFT_LIMIT,
+                }
+    else:
+        # show all limited tools even if unused for free plans
+        for tool, lim in TOOL_LIMITS.items():
+            if tool not in usage:
+                usage[tool] = {
+                    "used":      0,
+                    "limit":     get_limit(tool, plan),
+                    "remaining": get_limit(tool, plan),
+                }
 
-    return {"month": mk, "plan": plan, "credits": get_credit_balance(user_id), "usage": usage}
+    # Get credit ledger information for this month
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ledger_result = (
+        supabase.table("credit_ledger")
+        .select("amount")
+        .eq("user_id", user_id)
+        .gte("created_at", month_start.isoformat())
+        .execute()
+    )
+    
+    credits_spent_month = 0
+    credits_granted_month = 0
+    for row in ledger_result.data:
+        amount = row.get("amount", 0)
+        if amount < 0:
+            credits_spent_month += abs(amount)
+        else:
+            credits_granted_month += amount
+
+    current_balance = get_credit_balance(user_id)
+
+    return {
+        "month": mk, 
+        "plan": plan, 
+        "credits": current_balance,
+        "credits_spent_month": credits_spent_month,
+        "credits_granted_month": credits_granted_month,
+        "usage": usage
+    }
 
 
 @app.get("/plan")
@@ -517,7 +567,38 @@ def get_plan(authorization: str = Header(...)):
     """Return the user's current plan."""
     user_id = verify_token(authorization)
     plan    = get_user_plan(user_id)
-    return {"plan": plan, "user_id": user_id, "credits": get_credit_balance(user_id)}
+    
+    # Get credit ledger information for this month
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ledger_result = (
+        supabase.table("credit_ledger")
+        .select("amount")
+        .eq("user_id", user_id)
+        .gte("created_at", month_start.isoformat())
+        .execute()
+    )
+    
+    credits_spent_month = 0
+    credits_granted_month = 0
+    for row in ledger_result.data:
+        amount = row.get("amount", 0)
+        if amount < 0:
+            credits_spent_month += abs(amount)
+        else:
+            credits_granted_month += amount
+
+    current_balance = get_credit_balance(user_id)
+    total_credits = credits_granted_month + current_balance
+    usage_percentage = round((credits_spent_month / total_credits) * 100, 1) if total_credits > 0 else 0
+
+    return {
+        "plan": plan, 
+        "user_id": user_id, 
+        "credits": current_balance,
+        "credits_spent_month": credits_spent_month,
+        "credits_granted_month": credits_granted_month,
+        "usage_percentage": usage_percentage
+    }
 
 
 @app.post("/checkout")
@@ -616,8 +697,11 @@ async def dodo_webhook(
                 user_id,
                 tool_credits,
                 event_type,
-                f"{subscription_id}:{event_type}:{period_key}",
-                payload,
+                f"{subscription_id}:{event_type}:{period_key}:tools", payload, bucket="tools"
+            )
+            grant_credits(
+                user_id, DODO_MONTHLY_WORKSPACE_CREDITS, event_type,
+                f"{subscription_id}:{event_type}:{period_key}:workspace", payload, bucket="workspace"
             )
 
     if event_type in {"subscription.cancelled", "subscription.on_hold", "subscription.failed", "subscription.expired"}:
