@@ -40,18 +40,6 @@ function getSupabaseConfig() {
   };
 }
 
-  const missing = [];
-  if (!url) missing.push("SUPABASE_URL");
-  if (!anonKey) missing.push("SUPABASE_ANON_KEY");
-  if (!githubClientId) missing.push("GITHUB_CLIENT_ID");
-
-  if (missing.length) {
-    throw new Error(
-      `Missing required .env values: ${missing.join(", ")}.\n` +
-      "Add them to your .env file before running claw login."
-    );
-  }
-
 function saveSession(session) {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
   fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf8");
@@ -63,12 +51,10 @@ function loadSession() {
   try {
     const data = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
 
-    // fully expired — force re-login
     if (data.expires_at && Date.now() / 1000 > data.expires_at - 60) {
       return null;
     }
 
-    // silently extend if less than 7 days remaining
     const sevenDays = 7 * 24 * 60 * 60;
     if (data.expires_at && (data.expires_at - Date.now() / 1000) < sevenDays) {
       data.expires_at = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
@@ -80,6 +66,7 @@ function loadSession() {
     return null;
   }
 }
+
 function clearSession() {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
 }
@@ -191,7 +178,6 @@ async function login() {
     );
   }
 
-  // Step 1 — request device code from GitHub
   const deviceRes = await fetch("https://github.com/login/device/code", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json" },
@@ -214,7 +200,6 @@ async function login() {
     );
   }
 
-  // Step 2 — show user the code
   console.log("\n┌─────────────────────────────────────────┐");
   console.log("│         Claw-Coder Login                │");
   console.log("├─────────────────────────────────────────┤");
@@ -229,7 +214,6 @@ async function login() {
     require("child_process").execSync(`${cmd} "${device.verification_uri}"`, { stdio: "ignore" });
   } catch {}
 
-  // Step 3 — poll GitHub until user approves
   console.log("Waiting for you to approve in the browser...\n");
   const pollInterval = (device.interval || 5) * 1000;
   const expires = Date.now() + device.expires_in * 1000;
@@ -257,7 +241,6 @@ async function login() {
       throw new Error(`GitHub auth error: ${tokenData.error} — ${tokenData.error_description || ""}`);
     }
 
-    // Step 4 — get user info from GitHub
     const githubUserRes = await fetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: "application/json" },
     });
@@ -273,15 +256,12 @@ async function login() {
       throw new Error("Could not get email from GitHub. Make sure your account has a primary email.");
     }
 
-    // Step 5 — upsert user into Supabase
     console.log("Connecting to Supabase...");
     const supabaseData = await upsertSupabaseUser(
       supabaseUrl, serviceKey, primaryEmail,
       String(githubUser.id), githubUser.login, githubUser.avatar_url,
     );
 
-    // Step 6 — build session
-    // NOTE: if supabaseData has no access_token, fall back to GitHub token
     const accessToken = supabaseData?.access_token || tokenData.access_token;
     const expiresAt = supabaseData?.expires_at
       ? Math.floor(new Date(supabaseData.expires_at).getTime() / 1000)
