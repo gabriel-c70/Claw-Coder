@@ -338,16 +338,21 @@ def verify_dodo_signature(raw_body: bytes, webhook_id: str, timestamp: str, sign
     if not webhook_id or not timestamp or not signature:
         raise HTTPException(status_code=400, detail="Missing Dodo webhook signature headers")
 
-    signed_payload = b".".join([webhook_id.encode(), timestamp.encode(), raw_body])
-    digest = hmac.new(DODO_PAYMENTS_WEBHOOK_KEY.encode(), signed_payload, hashlib.sha256).digest()
-    expected_base64 = base64.b64encode(digest).decode()
-    expected_hex = digest.hex()
-    candidates = {expected_base64, f"v1,{expected_base64}", expected_hex, f"v1,{expected_hex}"}
+    secret = DODO_PAYMENTS_WEBHOOK_KEY
+    if secret.startswith("whsec_"):
+        secret_bytes = base64.b64decode(secret.split("_", 1)[1])
+    else:
+        secret_bytes = secret.encode()
 
-    received = {part.strip() for part in signature.split(" ") if part.strip()}
-    received.update(part.strip() for part in signature.split(",") if part.strip())
-    received.add(signature.strip())
-    if not any(hmac.compare_digest(candidate, item) for candidate in candidates for item in received):
+    signed_payload = f"{webhook_id}.{timestamp}.".encode() + raw_body
+    digest = hmac.new(secret_bytes, signed_payload, hashlib.sha256).digest()
+    expected_signature = base64.b64encode(digest).decode()
+
+    # header format: "v1,<sig>" possibly multiple, space-separated
+    provided_signatures = [
+        part.split(",", 1)[1] for part in signature.split(" ") if "," in part
+    ]
+    if not any(hmac.compare_digest(expected_signature, sig) for sig in provided_signatures):
         raise HTTPException(status_code=400, detail="Invalid Dodo webhook signature")
 
 

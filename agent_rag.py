@@ -2761,17 +2761,17 @@ class Agent:
             return json.dumps({"status": "error", "error": f"Unknown memory action: {action}"})
         return json.dumps({"status": "ok", "memories": self.memory[-limit:]}, ensure_ascii=False)
 
-    def _check_workspace_credits(self) -> Optional[str]:
+    def _check_workspace_credits(self, feature_name: str = "Workspace mode") -> Optional[str]:
         """Consumes WORKSPACE_CONNECT_COST credits via /workspace/connect. Returns error string or None."""
         import json as _json, urllib.request as _req, urllib.error, ssl
 
         session_path = Path.home() / ".claw-coder" / "session.json"
         if not session_path.exists():
-            return "Workspace mode requires a paid plan. Run: claw login, then claw buy"
+            return f"{feature_name} requires a paid plan. Run: claw login, then claw buy"
         try:
             token = _json.loads(session_path.read_text(encoding="utf-8")).get("access_token", "")
             if not token:
-                return "Workspace mode requires a paid plan. Run: claw login, then claw buy"
+                return f"{feature_name} requires a paid plan. Run: claw login, then claw buy"
         except Exception:
             return "Could not read your saved session. Run: claw login"
 

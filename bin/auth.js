@@ -7,6 +7,11 @@ const path = require("node:path");
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
 
+const BAKED_CONFIG = {
+  supabaseUrl:    "https://nqbrdafvdfntxvhbyama.supabase.co",
+  anonKey:        "sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
+  githubClientId: "Ov23li6ZYK8WmGloMm90",
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,9 +32,13 @@ function loadEnvFile() {
 function getSupabaseConfig() {
   loadEnvFile();
 
-  const url = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  const githubClientId = process.env.GITHUB_CLIENT_ID;
+  return {
+    url:            process.env.SUPABASE_URL      || BAKED_CONFIG.supabaseUrl,
+    anonKey:        process.env.SUPABASE_ANON_KEY || BAKED_CONFIG.anonKey,
+    serviceKey:     process.env.SUPABASE_SERVICE_KEY || null,  // env-only, always
+    githubClientId: process.env.GITHUB_CLIENT_ID  || BAKED_CONFIG.githubClientId,
+  };
+}
 
   const missing = [];
   if (!url) missing.push("SUPABASE_URL");
@@ -42,14 +51,6 @@ function getSupabaseConfig() {
       "Add them to your .env file before running claw login."
     );
   }
-
-  return {
-    url,
-    anonKey,
-    serviceKey: process.env.SUPABASE_SERVICE_KEY || null,
-    githubClientId,
-  };
-}
 
 function saveSession(session) {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
