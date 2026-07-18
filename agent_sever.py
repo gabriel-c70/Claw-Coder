@@ -702,6 +702,7 @@ async def dodo_webhook(
             grant_credits(
                 user_id, DODO_MONTHLY_WORKSPACE_CREDITS, event_type,
                 f"{subscription_id}:{event_type}:{period_key}:workspace", payload, bucket="workspace"
+
             )
 
     if event_type in {"subscription.cancelled", "subscription.on_hold", "subscription.failed", "subscription.expired"}:
