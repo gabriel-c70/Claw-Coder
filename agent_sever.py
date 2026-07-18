@@ -72,7 +72,32 @@ TOOL_LIMITS: dict[str, int] = {
 # Pro tier — soft limit per tool (can be exceeded with credits)
 PRO_LIMIT = 999_999
 PRO_SOFT_LIMIT = 400
-
+PLANS: dict[str, dict] = {
+    "plus": {
+        "product_id": os.getenv("DODO_PLUS_PRODUCT_ID", ""),
+        "price_usd": 25.00,
+        "tool_credits": os.getenv("DODO_PLUS_CREDITS"),
+        "workspace_credits": 0,       # starter has no workspace access at all
+        "tool_soft_limit": 100,       # per-tool free-ish ceiling before credits kick in
+        "workspace_allowed": False,
+    },
+    "pro": {
+        "product_id": os.getenv("DODO_PRO_PRODUCT_ID", ""),
+        "price_usd": 50.00,
+        "tool_credits": os.getenv("DODO_PRO_CREDITS", ""),
+        "workspace_credits": os.getenv("DODO_PRO_WORKSPACE_CREDITS", ""),
+        "tool_soft_limit": 400,
+        "workspace_allowed": True,
+    },
+    "max": {
+        "product_id": os.getenv("DODO_MAX_PRODUCT_ID", ""),
+        "price_usd": 100.00,
+        "tool_credits": os.getenv("DODO_MAX_CREDITS", ""),
+        "workspace_credits": os.getenv("DODO_MAX_WORKSPACE_CREDITS", ""),
+        "tool_soft_limit": 1000,
+        "workspace_allowed": True,
+    }
+}
 # Tools NOT in TOOL_LIMITS run unlimited for everyone (they're purely local)
 # read_files, list_files, edit_file, create_file, delete_file,
 # run_terminal, manage_memory, manage_plan, git_diff, git_status,
@@ -82,11 +107,10 @@ PRO_SOFT_LIMIT = 400
 def month_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
-
-def get_limit(tool_name: str, plan: str = "free") -> int:
-    if plan == "pro":
-        return PRO_SOFT_LIMIT  # Soft limit for PRO plans
-    return TOOL_LIMITS.get(tool_name, PRO_LIMIT)  # not in limits = unlimited
+def get_limit(tool_name: str, plan: str) -> int:
+    if plan in PLANS:
+        return PLANS[plan]["tool_soft_limit"]
+    return TOOL_LIMITS.get(tool_name, PRO_LIMIT)  # free tier
 TOOL_CREDIT_COSTS: dict[str, int] = {
     "search_knowledge_base":  20,
     "search_knowledge_graph": 20,
@@ -97,9 +121,9 @@ TOOL_CREDIT_COSTS: dict[str, int] = {
     "run_tests":              30,
     "ingest_paths_knowledge": 40,
 }
-WORKSPACE_CONNECT_COST = 15
-DODO_MONTHLY_TOOL_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", "1000"))
-DODO_MONTHLY_WORKSPACE_CREDITS = int(os.getenv("DODO_MONTHLY_WORKSPACE_CREDITS", "100"))
+WORKSPACE_CONNECT_COST = 20
+DODO_MONTHLY_TOOL_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", "10000"))
+DODO_MONTHLY_WORKSPACE_CREDITS = int(os.getenv("DODO_MONTHLY_WORKSPACE_CREDITS", "1000"))
 
 
 def verify_token(authorization: str) -> str:
@@ -452,13 +476,14 @@ def search(body: SearchRequest, authorization: str = Header(...)):
 def workspace_connect(authorization: str = Header(...)):
     user_id = verify_token(authorization)
     plan = get_user_plan(user_id)
+    cfg = PLANS.get(plan)
 
-    if plan != "pro":
+    if not cfg or not cfg["workspace_allowed"]:
         raise HTTPException(
             status_code=402,
             detail={
                 "error": "workspace_paid_only",
-                "message": "Workspace mode is a paid feature. Run `claw buy` to subscribe.",
+                "message": "Workspace mode requires the pro or max plan. Run `claw upgrade-plan` to see plans.",
             },
         )
 
@@ -613,20 +638,28 @@ def get_plan(authorization: str = Header(...)):
     }
 
 
+class CheckoutRequest(BaseModel):
+    mode: str = "subscription"
+    plan: str | None = None   # "starter" | "pro"
+    credits: int | None = None
+
 @app.post("/checkout")
 def create_checkout(body: CheckoutRequest, authorization: str = Header(...)):
-    """Create a Dodo checkout session for subscription or pay-as-you-go credits."""
     user_id = verify_token(authorization)
     mode = body.mode.strip().lower()
     if mode not in {"subscription", "topup"}:
         raise HTTPException(status_code=400, detail="mode must be subscription or topup")
 
     if mode == "subscription":
-        if not DODO_MONTHLY_PRODUCT_ID:
-            raise HTTPException(status_code=500, detail="DODO_MONTHLY_PRODUCT_ID is not configured")
-        product_id = DODO_MONTHLY_PRODUCT_ID
-        credits = body.credits or DODO_MONTHLY_CREDITS
-        metadata_product = "claw-coder-monthly"
+        plan = (body.plan or "pro").strip().lower()
+        if plan not in PLANS:
+            raise HTTPException(status_code=400, detail=f"Unknown plan '{plan}'. Choose: {', '.join(PLANS)}")
+        cfg = PLANS[plan]
+        if not cfg["product_id"]:
+            raise HTTPException(status_code=500, detail=f"Product ID for plan '{plan}' is not configured")
+        product_id = cfg["product_id"]
+        credits = body.credits or cfg["tool_credits"]
+        metadata_product = f"claw-coder-{plan}"
         billing = "monthly"
     else:
         if not DODO_TOPUP_PRODUCT_ID:
@@ -635,12 +668,14 @@ def create_checkout(body: CheckoutRequest, authorization: str = Header(...)):
         credits = body.credits or DODO_TOPUP_CREDITS
         metadata_product = "claw-coder-topup"
         billing = "topup"
+        plan = None
 
     payload = {
         "product_cart": [{"product_id": product_id, "quantity": 1}],
         "metadata": {
             "supabase_user_id": user_id,
             "credits": str(credits),
+            "plan": plan or "",
             "product": metadata_product,
             "billing": billing,
         },
@@ -649,17 +684,15 @@ def create_checkout(body: CheckoutRequest, authorization: str = Header(...)):
     checkout = dodo_request("/checkouts", payload)
     session_id = checkout.get("session_id")
     supabase.table("dodo_payments").insert({
-        "user_id": user_id,
-        "checkout_session_id": session_id,
-        "status": "checkout_created",
-        "credits": credits,
-        "raw_event": checkout,
+        "user_id": user_id, "checkout_session_id": session_id,
+        "status": "checkout_created", "credits": credits, "raw_event": checkout,
     }).execute()
     return {
         "checkout_url": checkout.get("checkout_url"),
         "session_id": session_id,
         "credits": credits,
-        "price_usd": 14.99,
+        "plan": plan,
+        "price_usd": PLANS[plan]["price_usd"] if plan else None,
         "billing": billing,
     }
 
@@ -698,24 +731,24 @@ async def dodo_webhook(
         if not user_id:
             raise HTTPException(status_code=400, detail="Missing supabase_user_id in subscription metadata")
 
-        upsert_subscription(user_id, event_data)
+        metadata = event_data.get("metadata") or {}
+        plan = (metadata.get("plan") or "pro").strip().lower()
+        if plan not in PLANS:
+            plan = "pro"  # safe fallback if something unexpected shows up
+        upsert_subscription(user_id, event_data, plan=plan)
 
         if event_type in {"subscription.active", "subscription.renewed"}:
-            metadata = event_data.get("metadata") or {}
-            tool_credits = int(metadata.get("credits") or DODO_MONTHLY_CREDITS)
+            plan_getter = PLANS[plan]
+            tool_credits = int(metadata.get("credits") or plan_getter["tool_credits"])
             subscription_id = event_data.get("subscription_id") or webhook_id
             period_key = event_data.get("next_billing_date") or event_data.get("previous_billing_date") or webhook_id
-            grant_credits(
-                user_id,
-                tool_credits,
-                event_type,
-                f"{subscription_id}:{event_type}:{period_key}:tools", payload, bucket="tools"
-            )
-            grant_credits(
-                user_id, DODO_MONTHLY_WORKSPACE_CREDITS, event_type,
-                f"{subscription_id}:{event_type}:{period_key}:workspace", payload, bucket="workspace"
 
-            )
+            grant_credits(user_id, tool_credits, event_type,
+                          f"{subscription_id}:{event_type}:{period_key}:tools", payload, bucket="tools")
+
+            if plan_getter["workspace_credits"] > 0:
+                grant_credits(user_id, plan_getter["workspace_credits"], event_type,
+                              f"{subscription_id}:{event_type}:{period_key}:workspace", payload, bucket="workspace")
 
     if event_type in {"subscription.cancelled", "subscription.on_hold", "subscription.failed", "subscription.expired"}:
         subscription_id = event_data.get("subscription_id")

@@ -22,7 +22,6 @@ create table if not exists public.credit_balances (
   primary key (user_id, bucket)
 );
 
-
 create table if not exists public.subscriptions (
   user_id uuid primary key references auth.users(id) on delete cascade,
   plan text not null default 'pro',
@@ -41,9 +40,15 @@ create table if not exists public.credit_ledger (
   reason text not null,
   reference_id text,
   metadata jsonb not null default '{}'::jsonb,
+  bucket text not null default 'tools',
   created_at timestamptz not null default now()
 );
 
+-- NOTE: this index is intentionally on (reference_id) alone, not
+-- (reference_id, bucket). Every call site must give each bucket its own
+-- distinct reference_id (e.g. suffix ":tools" / ":workspace") — otherwise
+-- two different buckets sharing one reference_id would collide and the
+-- second grant would silently no-op via ON CONFLICT DO NOTHING.
 create unique index if not exists credit_ledger_reference_id_unique
   on public.credit_ledger(reference_id)
   where reference_id is not null and amount > 0;
@@ -90,8 +95,8 @@ begin
     raise exception 'credit grant amount must be positive';
   end if;
 
-  insert into public.credit_ledger(user_id, amount, reason, reference_id, metadata)
-  values (p_user_id, p_amount, p_reason, p_reference_id, coalesce(p_metadata, '{}'::jsonb))
+  insert into public.credit_ledger(user_id, amount, reason, reference_id, metadata, bucket)
+  values (p_user_id, p_amount, p_reason, p_reference_id, coalesce(p_metadata, '{}'::jsonb), p_bucket)
   on conflict do nothing;
 
   if found then
@@ -130,12 +135,13 @@ begin
     return false;
   end if;
 
-  insert into public.credit_ledger(user_id, amount, reason, metadata)
+  insert into public.credit_ledger(user_id, amount, reason, metadata, bucket)
   values (
     p_user_id,
     -p_amount,
     'tool_usage',
-    jsonb_build_object('tool_name', p_tool_name, 'bucket', p_bucket)
+    jsonb_build_object('tool_name', p_tool_name),
+    p_bucket
   );
 
   return true;

@@ -2761,8 +2761,16 @@ class Agent:
             return json.dumps({"status": "error", "error": f"Unknown memory action: {action}"})
         return json.dumps({"status": "ok", "memories": self.memory[-limit:]}, ensure_ascii=False)
 
+    def _wake_render_server(self) -> None:
+        try:
+            import urllib.request as _req
+            _req.urlopen(f"{RATE_LIMIT_API_URL}/health", timeout=10)
+        except Exception:
+            pass  # best-effort — the real request below will surface any actual problem
+
     def _check_workspace_credits(self, feature_name: str = "Workspace mode") -> Optional[str]:
         """Consumes WORKSPACE_CONNECT_COST credits via /workspace/connect. Returns error string or None."""
+        self._wake_render_server()
         import json as _json, urllib.request as _req, urllib.error, ssl
 
         session_path = Path.home() / ".claw-coder" / "session.json"

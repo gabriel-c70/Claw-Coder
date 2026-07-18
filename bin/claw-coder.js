@@ -29,7 +29,7 @@ loadEnvFile();
 
 const HELP = `
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                         🦙 CLAW CODER - AI ASSISTANT                         ║
+║                          CLAW CODER - Autonomous local AI agent              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 📖 USAGE:
@@ -39,19 +39,19 @@ const HELP = `
 ║ 💬 CHAT & INTERACTION                                                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  chat [--pdf <file>...]         Start interactive chat (optionally preload   ║
-║                                PDFs)                                        ║
-║  chat --ui textual              Use improved UI with scrolling & selection  ║
+║                                PDFs)                                         ║
+║  chat --ui textual              Use improved UI with scrolling & selection   ║
 ║  models                         List local Ollama models                     ║
-║  <model-name>                   Start chat with specific Ollama model       ║
+║  <model-name>                   Start chat with specific Ollama model        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ 📚 KNOWLEDGE BASE                                                             ║
+║ 📚 KNOWLEDGE BASE                                                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  ingest <paths...>              Ingest files/directories into graph + vector ║
 ║                                RAG                                           ║
 ║  ingest-code <file>             Ingest one source file                       ║
-║  ingest-pdf <file>              Ingest a PDF or text document (.pdf, .txt,  ║
+║  ingest-pdf <file>              Ingest a PDF or text document (.pdf, .txt,   ║
 ║                                .md)                                          ║
 ║  search <query>                 Search vector RAG with graph reranking       ║
 ║  graph <query>                  Search the knowledge graph only              ║
@@ -60,52 +60,52 @@ const HELP = `
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ ⚙️  SETUP & CONFIGURATION                                                     ║
+║ ⚙️  SETUP & CONFIGURATION                                                    ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  setup                        Install Python dependencies for Claw Coder     ║
-║  doctor                       Check local Node/Python/Ollama setup          ║
+║  doctor                       Check local Node/Python/Ollama setup           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ 💳 ACCOUNT & BILLING                                                           ║
+║ 💳 ACCOUNT & BILLING                                                         ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  login [provider]              Log in via OAuth (default: github)            ║
 ║  logout                        Clear saved session                           ║
-║  whoami                        Show current logged-in user                    ║
+║  whoami                        Show current logged-in user                   ║
 ║  usage                        Show this month's cloud tool usage             ║
-║  credits                      Show paid credit balance                      ║
-║  buy                          Subscribe for $14.99/month Pro plan           ║
+║  credits                      Show paid credit balance                       ║
+║  upgrade-plan                 Subscribe to available plans                   ║
 ║  topup                        Buy extra pay-as-you-go credits                ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ 🔧 COMMON OPTIONS                                                             ║
+║ 🔧 COMMON OPTIONS                                                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  --top-k <n>                    Number of results to return                    ║
-║  --depth <n>                    Graph traversal depth for graph search         ║
-║  --graph <file>                 Knowledge graph JSON path                     ║
-║  --db <dir>                     ChromaDB directory                            ║
-║  --collection <name>            ChromaDB collection                           ║
-║  --model <name>                 Ollama chat model                             ║
+║  --top-k <n>                    Number of results to return                  ║
+║  --depth <n>                    Graph traversal depth for graph search       ║
+║  --graph <file>                 Knowledge graph JSON path                    ║
+║  --db <dir>                     ChromaDB directory                           ║
+║  --collection <name>            ChromaDB collection                          ║
+║  --model <name>                 Ollama chat model                            ║
 ║  --embedding-model <name>       Ollama embedding model                       ║
-║  --ui <rich|textual>            Choose UI style (default: rich)               ║
+║  --ui <rich|textual>            Choose UI style (default: rich)              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ 📝 EXAMPLES                                                                   ║
+║ 📝 EXAMPLES                                                                  ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  claw setup                    Install dependencies                          ║
 ║  claw doctor                   Check system setup                            ║
 ║  claw ingest .                 Ingest current directory                      ║
-║  claw graph "imports tree" --depth 2    Search knowledge graph              ║
+║  claw graph "imports tree" --depth 2    Search knowledge graph               ║ 
 ║  claw search "reranking" --top-k 5       Search with context                 ║
 ║  claw chat                     Start interactive chat                        ║
-║  claw chat --pdf report.pdf    Chat with PDF context                        ║
-║  claw chat --ui textual        Use improved UI with scrolling & selection    ║
-║  claw qwen2.5-coder:7b         Use specific model                           ║
+║  claw chat --pdf report.pdf    Chat with PDF context                         ║
+║  claw chat --ui textual        Use improved UI with scrolling & selection -beta not advised to be used║
+║  claw qwen2.5-coder:7b         Use specific model                            ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
-🌐 Visit https://github.com/gabriel-c70/Claw-Coder for more information
+🌐 Visit https://github.com/gabriel-c70/Claw-Coder.git for more information
 `;
 
 function printHelp() {
@@ -645,7 +645,7 @@ function buildAgentArgs(command, args) {
 
   throw new Error(`Unknown command: ${command}`);
 }
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   const commandArgs = args.slice(1);
@@ -728,9 +728,9 @@ function main() {
 
     apiFetch("/usage", session)
       .then((data) => {
-        const plan = data.plan || "free";
-        const planEmoji = plan === "pro" ? "⚡" : "🆓";
-        const planColor = plan === "pro" ? "\x1b[1;36m" : "\x1b[1;33m"; // cyan for pro, yellow for free
+        const plan = data.plan || "starter";
+        const planEmoji = plan === "plus" || "pro" || "max" ? "⚡" : "🆓";
+        const planColor = plan === "pro" || "pro" || "max" ? "\x1b[1;36m" : "\x1b[1;33m"; // cyan for pro, yellow for free
         const reset = "\x1b[0m";
 
         const creditsSpent = data.credits_spent_month || 0;
@@ -792,9 +792,9 @@ function main() {
         }
 
         console.log("\n" + "─".repeat(54));
-        if (plan === "free") {
-          console.log("  📝 Free allowance is used first. After that, paid credits are used.");
-          console.log("  🚀 Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
+        if (plan === "starter") {
+          console.log("  📝 Starter plan is used first. After that, paid credits are used.");
+          console.log("  🚀 Run `claw upgrade-plan` to subscribe or `claw topup` for extra credits.\n");
         } else {
           console.log("  ⚡ Pro plan: Each tool has a soft limit of 400 calls/month.");
           console.log("  💳 After reaching the soft limit, paid credits are used automatically.\n");
@@ -843,7 +843,7 @@ function main() {
         
         if (plan === "FREE" && credits < 100) {
           console.log("  ⚠️ Low credits! Consider upgrading to Pro for more features.");
-          console.log("  🚀 Run `claw buy` to subscribe or `claw topup` for extra credits.\n");
+          console.log("  🚀 Run `claw upgrade-plan` to subscribe or `claw topup` for extra credits.\n");
         } else if (plan === "PRO" && credits < 50) {
           console.log("  ⚠️ Running low on credits!");
           console.log("  🚀 Run `claw topup` for extra credits.\n");
@@ -857,7 +857,14 @@ function main() {
     return;
   }
 
-  if (command === "buy") {
+
+  const PLAN_INFO = {
+  plus: { label: "Claw-Coder Plus", price: "$25/month", desc: "1000 tool credits/month, no workspace access" },
+  pro:     { label: "Claw-Coder Pro",     price: "$50/month", desc: "10000 tool credits/month + 1000 workspace credits" },
+  max: { label: "Claw-Coder Max", price: "$100/month", desc: "100000 tool credits/month + 20000 workspace credits"}
+};
+
+  if (command === "upgrade-plan") {
     let session;
     try {
       session = requireSession();
@@ -866,45 +873,58 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    console.log(`\n${"═".repeat(50)}`);
-    console.log("  🛒 CREATING CHECKOUT FOR PRO SUBSCRIPTION");
-    console.log(`${"═".repeat(50)}`);
-    console.log("  ⚡ Claw Coder Pro Plan - $14.99/month");
-    console.log("  💰 1000 monthly credits included");
-    console.log("  🚀 Unlimited tool usage with soft limits");
-    console.log("  🌐 Workspace mode access");
-    console.log(`${"─".repeat(50)}\n`);
-    
-    apiFetch("/checkout", session, { method: "POST", body: JSON.stringify({}) })
+
+    let plan = (commandArgs[0] || "").toLowerCase();
+
+    if (!plan) {
+      console.log("\nAvailable plans:\n");
+      for (const [key, info] of Object.entries(PLAN_INFO)) {
+        console.log(`  ${key.padEnd(8)} ${info.label.padEnd(16)} ${info.price.padEnd(12)} ${info.desc}`);
+      }
+      console.log("");
+      const readline = require("node:readline");
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      plan = await new Promise((resolve) => {
+        rl.question("Which plan? (plus/pro/max): ", (answer) => {
+          rl.close();
+          resolve(answer.trim().toLowerCase());
+        });
+      });
+    }
+
+    if (!PLAN_INFO[plan]) {
+      console.error(`Unknown plan '${plan}'. Choose: ${Object.keys(PLAN_INFO).join(", ")}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Creating checkout for ${PLAN_INFO[plan].label} (${PLAN_INFO[plan].price})...`);
+    apiFetch("/checkout", session, {
+      method: "POST",
+      body: JSON.stringify({ mode: "subscription", plan }),
+    })
       .then((data) => {
         if (!data.checkout_url) {
           throw new Error("The billing server did not return a checkout URL.");
         }
-        console.log(`  ✅ Checkout created successfully!`);
-        console.log(`  💳 Monthly credits: ${data.credits}`);
-        console.log(`  🔗 Checkout URL: ${data.checkout_url}\n`);
-        console.log("  🌐 Opening checkout page in your browser...\n");
-        
+        console.log(`\n  Plan: ${PLAN_INFO[plan].label}`);
+        console.log(`  Monthly credits: ${data.credits}`);
+        console.log(`  Checkout: ${data.checkout_url}\n`);
         const opener = process.platform === "darwin" ? "open"
           : process.platform === "win32" ? "start"
           : "xdg-open";
         try {
-          spawnSync(opener, [data.checkout_url], {
-            stdio: "ignore",
-            shell: process.platform === "win32",
-          });
+          spawnSync(opener, [data.checkout_url], { stdio: "ignore", shell: process.platform === "win32" });
         } catch {}
-        
-        console.log("  📝 After payment, your credits will be added automatically.");
-        console.log("  🔄 Run `claw credits` to check your balance after payment.\n");
       })
       .catch((err) => {
-        console.error(`❌ Could not create checkout: ${err.message}`);
-        console.error("⏳ If this is Render free hosting, wait a few seconds and retry.");
+        console.error(`Could not create checkout: ${err.message}`);
+        console.error("If this is Render free hosting, wait a few seconds and retry.");
         process.exitCode = 1;
       });
     return;
   }
+
 
   if (command === "topup") {
     let session;
@@ -973,7 +993,7 @@ function main() {
   const KNOWN_COMMANDS = new Set([
     "chat", "models", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
-    "setup", "doctor", "raw", "embedding","usage", "credits", "buy", "topup-> beta"
+    "setup", "doctor", "raw", "embedding","usage", "credits", "upgrade-plan", "topup"
   ]);
 
   if (!KNOWN_COMMANDS.has(command)) {

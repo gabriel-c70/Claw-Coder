@@ -149,7 +149,7 @@ class WorkspaceRemoteClient:
         config_message = self.ensure_ssh_config(target)
 
         status("Checking on the connection...")
-        verify = self._ssh(target, "printf claw-workspace-ready", timeout=50)
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=100)
         if verify.returncode != 0:
             error_msg = (verify.stderr or verify.stdout).strip()
             return (
