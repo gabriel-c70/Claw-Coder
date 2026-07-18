@@ -81,7 +81,7 @@ except ImportError:
 load_dotenv()
 
 RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-3.onrender.com")
-RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "40"))
+RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "90"))
 
 logging.basicConfig(
     level=logging.INFO,

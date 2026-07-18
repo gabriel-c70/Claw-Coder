@@ -32,7 +32,7 @@ DODO_PAYMENTS_BASE_URL = os.getenv("DODO_PAYMENTS_BASE_URL", "https://test.dodop
 DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", os.getenv("DODO_PRODUCT_ID", ""))
 DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CREDITS_PER_PURCHASE", "1000")))
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
-DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "200"))
+DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "500"))
 DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder-3.onrender.com")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -88,13 +88,13 @@ def get_limit(tool_name: str, plan: str = "free") -> int:
         return PRO_SOFT_LIMIT  # Soft limit for PRO plans
     return TOOL_LIMITS.get(tool_name, PRO_LIMIT)  # not in limits = unlimited
 TOOL_CREDIT_COSTS: dict[str, int] = {
-    "search_knowledge_base":  8,
-    "search_knowledge_graph": 8,
-    "ingest_code_knowledge":  10,
+    "search_knowledge_base":  20,
+    "search_knowledge_graph": 20,
+    "ingest_code_knowledge":  25,
     "ingest_pdf_knowledge":   15,
-    "execute_code_in_docker": 15,
-    "search_stuff":           20,
-    "run_tests":              25,
+    "execute_code_in_docker": 30,
+    "search_stuff":           40,
+    "run_tests":              30,
     "ingest_paths_knowledge": 40,
 }
 WORKSPACE_CONNECT_COST = 15
