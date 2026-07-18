@@ -2982,7 +2982,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             if user_input.lower() in {"exit", "quit", "/exit", "/quit"}:
                 break
             if user_input.lower() in {"/help", "help"}:
-                print_status("Commands: /models  /model <name> - switch models  /workspace <ssh-target> - connect to remote workspace  /workspace status - show workspace status  /workspace local - switch to local mode  /pdf <file>  /title  exit")
+                print_status("Commands: /models  /model <name> - switch models  /workspace - connect to remote workspace  /workspace status - show workspace status  /workspace local - switch to local mode  /pdf <file>  /title  exit")
                 continue
             if user_input.lower() == "/models":
                 if agent.remote_workspace and agent.remote_workspace.active:

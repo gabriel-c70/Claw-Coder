@@ -143,13 +143,14 @@ class WorkspaceRemoteClient:
                 "  - IP address: 192.168.1.1 or user@192.168.1.1\n"
                 "  - GitHub Codespaces: https://github.com/codespaces/...\n"
                 "  - SSH config alias: your-alias-from-ssh-config\n"
+
             )
 
         status(f"Configuring SSH for {target}...")
         config_message = self.ensure_ssh_config(target)
 
         status("Checking on the connection...")
-        verify = self._ssh(target, "printf claw-workspace-ready", timeout=100)
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=300)
         if verify.returncode != 0:
             error_msg = (verify.stderr or verify.stdout).strip()
             return (
