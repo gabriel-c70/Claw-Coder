@@ -40,6 +40,7 @@ const HELP = `
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  chat [--pdf <file>...]         Start interactive chat (optionally preload   ║
 ║                                PDFs)                                        ║
+║  chat --ui textual              Use improved UI with scrolling & selection  ║
 ║  models                         List local Ollama models                     ║
 ║  <model-name>                   Start chat with specific Ollama model       ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -87,6 +88,7 @@ const HELP = `
 ║  --collection <name>            ChromaDB collection                           ║
 ║  --model <name>                 Ollama chat model                             ║
 ║  --embedding-model <name>       Ollama embedding model                       ║
+║  --ui <rich|textual>            Choose UI style (default: rich)               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -99,6 +101,7 @@ const HELP = `
 ║  claw search "reranking" --top-k 5       Search with context                 ║
 ║  claw chat                     Start interactive chat                        ║
 ║  claw chat --pdf report.pdf    Chat with PDF context                        ║
+║  claw chat --ui textual        Use improved UI with scrolling & selection    ║
 ║  claw qwen2.5-coder:7b         Use specific model                           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -236,6 +239,7 @@ function stripKnownOptions(args) {
     "--language",
     "--pdf",
     "--document",
+    "--ui",
   ]);
   const flags = new Set(["--no-recursive", "--no-vector-rag", "--no-hybrid-rerank"]);
   const cleaned = [];
@@ -575,7 +579,12 @@ function buildAgentArgs(command, args) {
 
   if (command === "chat") {
     ensureOllamaReadyForChat();
-    return [...globalOptions, "chat", ...collectDocumentOptions(args)];
+    const uiOption = readOption(args, ["--ui"]);
+    const chatArgs = ["chat", ...collectDocumentOptions(args)];
+    if (uiOption) {
+      chatArgs.push("--ui", uiOption);
+    }
+    return [...globalOptions, ...chatArgs];
   }
   if (command === "models") {
     return [...globalOptions, "models"];

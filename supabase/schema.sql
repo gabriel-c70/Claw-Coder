@@ -15,10 +15,13 @@ create table if not exists public.tool_usage (
 );
 
 create table if not exists public.credit_balances (
-  user_id uuid primary key references auth.users(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  bucket text not null default 'tools',
   balance integer not null default 0 check (balance >= 0),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  primary key (user_id, bucket)
 );
+
 
 create table if not exists public.subscriptions (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -75,7 +78,8 @@ create or replace function public.grant_user_credits(
   p_amount integer,
   p_reason text,
   p_reference_id text,
-  p_metadata jsonb default '{}'::jsonb
+  p_metadata jsonb default '{}'::jsonb,
+  p_bucket text default 'tools'
 ) returns void
 language plpgsql
 security definer
@@ -91,9 +95,9 @@ begin
   on conflict do nothing;
 
   if found then
-    insert into public.credit_balances(user_id, balance)
-    values (p_user_id, p_amount)
-    on conflict (user_id) do update
+    insert into public.credit_balances(user_id, bucket, balance)
+    values (p_user_id, p_bucket, p_amount)
+    on conflict (user_id, bucket) do update
       set balance = public.credit_balances.balance + excluded.balance,
           updated_at = now();
   end if;
@@ -103,7 +107,8 @@ $$;
 create or replace function public.consume_user_credit(
   p_user_id uuid,
   p_tool_name text,
-  p_amount integer default 1
+  p_amount integer default 1,
+  p_bucket text default 'tools'
 ) returns boolean
 language plpgsql
 security definer
@@ -118,6 +123,7 @@ begin
   set balance = balance - p_amount,
       updated_at = now()
   where user_id = p_user_id
+    and bucket = p_bucket
     and balance >= p_amount;
 
   if not found then
@@ -129,7 +135,7 @@ begin
     p_user_id,
     -p_amount,
     'tool_usage',
-    jsonb_build_object('tool_name', p_tool_name)
+    jsonb_build_object('tool_name', p_tool_name, 'bucket', p_bucket)
   );
 
   return true;

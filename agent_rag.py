@@ -2903,6 +2903,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat = subparsers.add_parser("chat")
     chat.add_argument("--pdf", action="append", default=[], dest="pdf_paths")
     chat.add_argument("--document", action="append", default=[], dest="document_paths")
+    chat.add_argument("--ui", choices=["rich", "textual"], default="rich", help="Choose UI: rich (default) or textual (improved with scrolling/selection)")
     subparsers.add_parser("models")
     subparsers.add_parser("languages")
 
@@ -2973,7 +2974,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             if user_input.lower() in {"exit", "quit", "/exit", "/quit"}:
                 break
             if user_input.lower() in {"/help", "help"}:
-                print_status("Commands: /models  /model <name> - switch models  /workspace - connect to codespace /pdf <file>  /title  exit")
+                print_status("Commands: /models  /model <name> - switch models  /workspace <ssh-target> - connect to remote workspace  /workspace status - show workspace status  /workspace local - switch to local mode  /pdf <file>  /title  exit")
                 continue
             if user_input.lower() == "/models":
                 if agent.remote_workspace and agent.remote_workspace.active:
@@ -3021,7 +3022,11 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                         else:
                             print_status(agent.remote_workspace.pull_model(parts[2].strip()))
                 else:
-                    print_status("Usage: /workspace | /workspace status | /workspace local | /workspace pull <model>")
+                    # Treat as connection target
+                    target = " ".join(parts[1:])
+                    with ChatSpinner("Untangling workspace...."):
+                        result = agent.setup_workspace_from_paste(target)
+                    print_status(result)
                 continue
             if user_input.lower() == "/title":
                 title = conversation_title_from_message(

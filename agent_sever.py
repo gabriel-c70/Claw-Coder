@@ -97,7 +97,7 @@ TOOL_CREDIT_COSTS: dict[str, int] = {
     "run_tests":              25,
     "ingest_paths_knowledge": 40,
 }
-WORKSPACE_CONNECT_COST = 12
+WORKSPACE_CONNECT_COST = 15
 DODO_MONTHLY_TOOL_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", "1000"))
 DODO_MONTHLY_WORKSPACE_CREDITS = int(os.getenv("DODO_MONTHLY_WORKSPACE_CREDITS", "100"))
 
@@ -327,7 +327,7 @@ def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
         "used": used,
         "limit": limit,
         "remaining": limit - used,
-        "credits": get_credit_balance(user_id),
+        "credits": get_credit_balance(user_id, "tools"),
         "month": mk,
         "plan": plan,
         "source": "monthly",
@@ -470,13 +470,14 @@ def workspace_connect(authorization: str = Header(...)):
                 "credits": get_credit_balance(user_id, "workspace"),
                 "cost": WORKSPACE_CONNECT_COST,
                 "message": (
-                    f"Workspace connections cost {WORKSPACE_CONNECT_COST} credits "
-                    f"(you have {get_credit_balance(user_id, 'workspace')}). "
-                    "Run `claw topup` for more, or wait for next month's allotment."
+                    f"Workspace connections cost {WORKSPACE_CONNECT_COST} workspace credits "
+                    f"(you have {get_credit_balance(user_id, 'workspace')} workspace credits). "
+                    "Run `claw buy` to subscribe for workspace credits, or wait for next month's allotment."
                 ),
             },
         )
     return {"allowed": True, "credits": get_credit_balance(user_id, "workspace")}
+
 @app.get("/usage")
 def get_usage(authorization: str = Header(...)):
     """Return this month's usage for the logged-in user."""
@@ -550,12 +551,17 @@ def get_usage(authorization: str = Header(...)):
         else:
             credits_granted_month += amount
 
-    current_balance = get_credit_balance(user_id)
+    # Get balances from both buckets
+    tools_balance = get_credit_balance(user_id, "tools")
+    workspace_balance = get_credit_balance(user_id, "workspace")
+    current_balance = tools_balance + workspace_balance
 
     return {
         "month": mk, 
         "plan": plan, 
         "credits": current_balance,
+        "tools_credits": tools_balance,
+        "workspace_credits": workspace_balance,
         "credits_spent_month": credits_spent_month,
         "credits_granted_month": credits_granted_month,
         "usage": usage
@@ -587,7 +593,11 @@ def get_plan(authorization: str = Header(...)):
         else:
             credits_granted_month += amount
 
-    current_balance = get_credit_balance(user_id)
+    # Get balances from both buckets
+    tools_balance = get_credit_balance(user_id, "tools")
+    workspace_balance = get_credit_balance(user_id, "workspace")
+    current_balance = tools_balance + workspace_balance
+    
     total_credits = credits_granted_month + current_balance
     usage_percentage = round((credits_spent_month / total_credits) * 100, 1) if total_credits > 0 else 0
 
@@ -595,6 +605,8 @@ def get_plan(authorization: str = Header(...)):
         "plan": plan, 
         "user_id": user_id, 
         "credits": current_balance,
+        "tools_credits": tools_balance,
+        "workspace_credits": workspace_balance,
         "credits_spent_month": credits_spent_month,
         "credits_granted_month": credits_granted_month,
         "usage_percentage": usage_percentage
@@ -742,7 +754,7 @@ async def dodo_webhook(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }, on_conflict="payment_id").execute()
 
-            grant_credits(user_id, credits, "dodo_topup", payment_id, payload)
+            grant_credits(user_id, credits, "dodo_topup", payment_id, payload, bucket="tools")
 
     supabase.table("webhook_events").update({
         "processed": True,

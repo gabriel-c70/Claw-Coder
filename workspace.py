@@ -134,18 +134,33 @@ class WorkspaceRemoteClient:
 
         target = parse_codespace_target(pasted)
         if not target:
-            return "Could not find an SSH host in that input. Paste something like: ssh cs.your-codespace-name"
+            return (
+                "Could not find an SSH host in that input.\n"
+                "Supported formats:\n"
+                "  - SSH command: ssh user@hostname\n"
+                "  - Simple hostname: hostname or user@hostname\n"
+                "  - With port: hostname:port or user@hostname:port\n"
+                "  - IP address: 192.168.1.1 or user@192.168.1.1\n"
+                "  - GitHub Codespaces: https://github.com/codespaces/...\n"
+                "  - SSH config alias: your-alias-from-ssh-config\n"
+            )
 
         status(f"Configuring SSH for {target}...")
         config_message = self.ensure_ssh_config(target)
 
-        status("Testing connection...")
-        verify = self._ssh(target, "printf claw-workspace-ready", timeout=20)  # was 14400 — tightened
+        status("Checking on the connection...")
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=50)
         if verify.returncode != 0:
+            error_msg = (verify.stderr or verify.stdout).strip()
             return (
                 f"SSH config step: {config_message}\n"
                 f"Could not connect to {target}.\n"
-                f"{(verify.stderr or verify.stdout).strip()}"
+                f"Error: {error_msg}\n\n"
+                f"Troubleshooting:\n"
+                f"  1. Ensure the host is reachable: ssh {target}\n"
+                f"  2. Check your SSH config: cat ~/.ssh/config\n"
+                f"  3. Verify authentication: ssh -v {target}\n"
+                f"  4. For GPU servers, ensure SSH is running and port is open\n"
             )
 
         self.config.mode = "ssh"
@@ -155,6 +170,9 @@ class WorkspaceRemoteClient:
         discovered = self.discover_workspace_dir(target)
         if discovered:
             self.config.remote_dir = discovered
+            status(f"Found workspace directory: {discovered}")
+        else:
+            status(f"Using default directory: {self.config.remote_dir}")
 
         status("Syncing Claw-Coder to the remote...")
         copied = self.sync_backend(package_root)
@@ -163,19 +181,21 @@ class WorkspaceRemoteClient:
         prepared = self.prepare_remote(on_status=status)
 
         return (
-            f"Connected to {target}\n"
+            f"✅ Connected to {target}\n"
             f"SSH config: {config_message}\n"
             f"Remote workspace: {self.config.remote_dir}\n"
             f"Backend: {copied}\n"
             f"Dependencies: {prepared}\n"
-            "Workspace mode is on."
+            "Workspace mode is now active."
         )
 
 
 
     def ensure_ssh_config(self, target: str) -> str:
         if self.host_in_ssh_config(target):
-            return "already configured"
+            return "already configured in SSH config"
+        
+        # Handle GitHub Codespaces specifically
         if target.startswith("cs."):
             codespace = target[3:]
             try:
@@ -186,12 +206,23 @@ class WorkspaceRemoteClient:
                     timeout=14400,
                 )
             except FileNotFoundError:
-                return "GitHub CLI not found; install gh or paste a host already configured in ~/.ssh/config"
+                return "GitHub CLI not found; install gh or configure SSH manually for codespaces"
             if gh.returncode == 0 and gh.stdout.strip():
                 self.write_managed_ssh_config(gh.stdout.strip())
                 return "configured with gh codespace ssh --config"
             return (gh.stderr or gh.stdout or "gh codespace ssh --config returned no config").strip()
-        return "host will use existing SSH defaults"
+        
+        # For non-codespace targets, create a basic SSH config entry
+        # This is a minimal config that will use the user's existing SSH keys and defaults
+        basic_config = f"""Host {target}
+    UserKnownHostsFile ~/.ssh/known_hosts
+    StrictHostKeyChecking accept-new"""
+        
+        try:
+            self.write_managed_ssh_config(basic_config)
+            return f"added basic SSH config for {target}"
+        except Exception as e:
+            return f"could not create SSH config: {str(e)}; will use SSH defaults"
 
     def pull_model(self, model: str) -> str:
         model = normalize_model_name(model)
@@ -331,12 +362,29 @@ class WorkspaceRemoteClient:
             "/workspaces",  # GitHub Codespaces convention
             "/workspace",  # common in many cloud dev-container / GPU-pod images (singular)
             "/root",  # common default working dir on bare GPU pods (e.g. RunPod)
+            "/home",  # common on Linux systems
             "$HOME",  # universal fallback
-            "/mycodeenvironment"
+            "/mycodeenvironment",
+            "/app",  # common in containerized applications
+            "/project",  # another common project directory
         ]
 
         for root in candidate_roots:
-            command = f"find {root} -mindepth 1 -maxdepth 1 -type d 2>/dev/null"
+            # Expand $HOME if needed
+            if root == "$HOME":
+                home_check = self._ssh(target, "echo $HOME", timeout=15)
+                if home_check.returncode == 0:
+                    root = home_check.stdout.strip()
+                else:
+                    continue
+            
+            # Check if the root exists
+            check_cmd = f"test -d {shlex.quote(root)} && echo 'exists' || echo 'notfound'"
+            check_result = self._ssh(target, check_cmd, timeout=15)
+            if check_result.returncode != 0 or "notfound" in check_result.stdout:
+                continue
+            
+            command = f"find {shlex.quote(root)} -mindepth 1 -maxdepth 1 -type d 2>/dev/null"
             result = self._ssh(target, command, timeout=15)
             if result.returncode != 0:
                 continue
@@ -365,6 +413,17 @@ class WorkspaceRemoteClient:
                 for c in candidates:
                     if c.rsplit("/", 1)[-1] == repo_name:
                         return c
+
+            # Check for common project indicators (package.json, requirements.txt, etc.)
+            project_check = self._ssh(
+                target,
+                " ; ".join(
+                    f"test -f {shlex.quote(c + '/package.json')} -o test -f {shlex.quote(c + '/requirements.txt')} -o test -f {shlex.quote(c + '/setup.py')} && printf '%s\\n' {shlex.quote(c)}" for c in candidates),
+                timeout=15,
+            )
+            project_dirs = [line.strip() for line in project_check.stdout.splitlines() if line.strip()]
+            if len(project_dirs) == 1:
+                return project_dirs[0]
 
             # Deterministic fallback rather than an arbitrary `head -n 1` pick.
             return sorted(candidates)[0]
@@ -461,9 +520,25 @@ def normalize_model_name(model: str) -> str:
 
 
 def parse_codespace_target(value: str) -> Optional[str]:
+    """
+    Parse various SSH target formats and return a clean hostname.
+    
+    Supports:
+    - SSH commands: "ssh user@hostname", "ssh hostname"
+    - GitHub Codespaces URLs: "https://github.com/codespaces/..."
+    - Simple hostnames: "hostname", "user@hostname"
+    - Hostnames with port: "hostname:port", "user@hostname:port"
+    - IP addresses: "192.168.1.1", "user@192.168.1.1"
+    """
     text = value.strip()
     if not text:
         return None
+    
+    # Validate input doesn't contain spaces (except in ssh command format)
+    if " " in text and not text.startswith("ssh "):
+        return None
+    
+    # Handle SSH command format
     if text.startswith("ssh "):
         try:
             parts = shlex.split(text)
@@ -471,7 +546,10 @@ def parse_codespace_target(value: str) -> Optional[str]:
             parts = text.split()
         for part in reversed(parts[1:]):
             if not part.startswith("-") and "=" not in part:
-                return part
+                # Recursively parse the extracted part to handle user@host:port format
+                return parse_codespace_target(part)
+    
+    # Handle URL format (GitHub Codespaces, etc.)
     parsed = urlparse(text)
     if parsed.scheme:
         query = parse_qs(parsed.query)
@@ -481,6 +559,41 @@ def parse_codespace_target(value: str) -> Optional[str]:
         path_name = parsed.path.rstrip("/").split("/")[-1]
         if path_name:
             return path_name if path_name.startswith("cs.") else f"cs.{path_name}"
-    if re.match(r"^[A-Za-z0-9_.@-]+$", text):
+    
+    # Handle various SSH target formats
+    # Remove ssh:// prefix if present
+    if text.startswith("ssh://"):
+        text = text[6:]
+    
+    # Extract hostname from user@host:port format
+    # This handles: user@hostname, user@hostname:port, hostname:port, hostname
+    ssh_target = text
+    
+    # Remove port specification if present
+    if ":" in ssh_target and not ssh_target.startswith("["):
+        # Handle IPv6 addresses in brackets [::1]:port
+        if ssh_target.startswith("["):
+            bracket_end = ssh_target.find("]")
+            if bracket_end != -1:
+                ssh_target = ssh_target[:bracket_end + 1]
+        else:
+            ssh_target = ssh_target.split(":")[0]
+    
+    # Remove user@ prefix if present
+    if "@" in ssh_target:
+        ssh_target = ssh_target.split("@")[1]
+    
+    # Basic validation - allow alphanumeric, dots, dashes, and underscores
+    # Also allow IPv6 addresses with colons and brackets
+    if re.match(r"^[A-Za-z0-9_.-]+$", ssh_target):
+        return ssh_target
+    elif re.match(r"^\[?[A-Za-z0-9:.]+\]?$", ssh_target):
+        return ssh_target
+    
+    # If nothing matched, check if it could be a valid SSH config alias
+    # SSH aliases can contain alphanumeric, dots, dashes, underscores
+    if re.match(r"^[A-Za-z0-9_.-]+$", text):
         return text
+    
+    # If still nothing matched, return None to indicate invalid input
     return None
