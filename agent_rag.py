@@ -1522,7 +1522,7 @@ class Agent:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=100
             )
             return json.dumps({
                 "status":(
@@ -1573,7 +1573,7 @@ class Agent:
                     command,
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=80,
                 )
                 return json.dumps({
                     "status": (
