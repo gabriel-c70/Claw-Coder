@@ -2715,7 +2715,8 @@ class Agent:
                     "language": language,
                     "image": spec["image"],
                     "stdout": self.decode_process_output(exc.stdout),
-                    "stderr": f"Docker sandbox timed out after {timeout} seconds.",
+                    "stderr": f"Docker sandbox timed out "
+                              f"after {timeout} seconds.",
                     "returncode": 124,
                     "timeout": timeout,
                 })

@@ -216,7 +216,7 @@ class WorkspaceRemoteClient:
                     ["gh", "codespace", "ssh", "--config", "--codespace", codespace],
                     text=True,
                     capture_output=True,
-                    timeout=60,
+                    timeout=90,
                 )
             except FileNotFoundError:
                 return "GitHub CLI not found; install gh or configure SSH manually for codespaces"
@@ -254,7 +254,7 @@ class WorkspaceRemoteClient:
         if not self.active:
             return []
         script = "import json, ollama; print(json.dumps(ollama.list(), default=lambda o: getattr(o, '__dict__', str(o))))"
-        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=35)
+        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=100)
         if result.returncode != 0 or not result.stdout.strip():
             return []
         try:
@@ -356,13 +356,13 @@ class WorkspaceRemoteClient:
                 return f"deps: {pip_status}; ollama install failed: {(install.stderr or install.stdout)[-500:].strip()}"
 
         # 3. Ollama daemon running?
-        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=15)
+        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=50)
         if is_running.stdout.strip() != "yes":
             status("Starting ollama serve on the remote...")
             self._ssh(
                 target,
                 "setsid nohup ollama serve > /tmp/ollama.log 2>&1 < /dev/null & disown; sleep 3; printf started",
-                timeout=40,
+                timeout=100,
             )
             # Re-verify instead of assuming success — this is the actual fix.
             recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=60)
