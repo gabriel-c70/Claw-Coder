@@ -150,7 +150,7 @@ class WorkspaceRemoteClient:
         config_message = self.ensure_ssh_config(target)
 
         status("Checking on the connection...")
-        verify = self._ssh(target, "printf claw-workspace-ready", timeout=30)
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=90)
         if verify.returncode != 0:
             error_msg = (verify.stderr or verify.stdout).strip()
             hint = ""
@@ -355,12 +355,12 @@ class WorkspaceRemoteClient:
             self._ssh(
                 target,
                 "setsid nohup ollama serve > /tmp/ollama.log 2>&1 < /dev/null & disown; sleep 3; printf started",
-                timeout=20,
+                timeout=40,
             )
             # Re-verify instead of assuming success — this is the actual fix.
-            recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=15)
+            recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=30)
             if recheck.stdout.strip() != "yes":
-                log_tail = self._ssh(target, "tail -n 20 /tmp/ollama.log 2>/dev/null", timeout=15)
+                log_tail = self._ssh(target, "tail -n 20 /tmp/ollama.log 2>/dev/null", timeout=100)
                 return (
                     f"deps: {pip_status}; ollama FAILED to start. Log tail:\n"
                     f"{(log_tail.stdout or log_tail.stderr or 'no log available').strip()}"
@@ -480,7 +480,7 @@ class WorkspaceRemoteClient:
         command = str(tool_input.get("command", "")).strip()
         if not command:
             return json.dumps({"status": "error", "error": "Missing command"})
-        timeout = int(tool_input.get("timeout", 100))
+        timeout = int(tool_input.get("timeout", 300))
         remote_command = f"cd {shlex.quote(self.config.remote_dir)} && {command}"
         try:
             result = self._ssh(self.config.ssh_target or "", remote_command, timeout=max(1, timeout))
