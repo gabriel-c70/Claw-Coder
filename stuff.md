@@ -92,6 +92,6 @@ uvicorn agent_sever:app --host 0.0.0.0 --port $PORT
 ```bash
 claw usage      # monthly usage plus paid credits
 claw credits    # current paid credit balance
-claw buy        # opens Dodo checkout for the $10/month subscription
+claw upgrade-plan       # opens Dodo checkout for the $10/month subscription
 claw topup      # opens Dodo checkout for one-time extra credits
 ```

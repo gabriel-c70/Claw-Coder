@@ -2775,11 +2775,11 @@ class Agent:
 
         session_path = Path.home() / ".claw-coder" / "session.json"
         if not session_path.exists():
-            return f"{feature_name} requires a paid plan. Run: claw login, then claw buy"
+            return f"{feature_name} requires a paid plan. Run: claw login, then claw upgrade-plan"
         try:
             token = _json.loads(session_path.read_text(encoding="utf-8")).get("access_token", "")
             if not token:
-                return f"{feature_name} requires a paid plan. Run: claw login, then claw buy"
+                return f"{feature_name} requires a paid plan. Run: claw login, then claw upgrade-plan"
         except Exception:
             return "Could not read your saved session. Run: claw login"
 

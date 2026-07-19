@@ -7,6 +7,9 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
+import time
+import math
 from typing import Any, Dict, List, Optional, Sequence
 
 try:
@@ -50,54 +53,110 @@ def set_terminal_title(title: str) -> None:
 
 def conversation_title_from_message(message: str, max_len: int = 40) -> str:
 
-    """Derive a short tab title from the user's first message."""
-    import ollama
-
+    """Derive a short tab title from the user's first message using cloud API or local Ollama."""
+    import json
+    import urllib.request
+    import urllib.error
+    import ssl
+    from pathlib import Path
+    
     text = " ".join(message.strip().split())
     if not text:
         return DEFAULT_TAB_PREFIX
 
     text = re.sub(r"^[/!@#]+\s*", "", text)
-    prefix_prompt = f"""
-        You are a professional AI assistant that knows everything there is to know on how to turn user prompts to terminal titles
-        User_prompt:
-        {text}.
-        Your job is to turn a user prompt into a terminal title that best describes what the user is working on or meaning.
-        For example;
-        If the user says hello there claw-coder.
-        You return a terminal title like Greetings or Polite Interactions
-        The rules needed for this:
-        1. Always use capitalize the first letter of every full word you come up with for example Ui Improvements To Project
-        2. Always be straight to the point and brief but also at the same time getting the most accurate meaning of the chat at first interaction
-        3. Don't use complex english unless you really need to, and if it's part of the user's first message and it best explains the user's interactions with the AI agent but all in all be simple with the english
-        4. If the user uses words that are non sense or not really words or a task like a mix of random letters just always default to Casual Interaction.
-        That's it just make sure you always do your best and make complex words and tasks as simple as possible so it can be placed in a beautiful way on the terminal tab also the max length for your conversation titles should be under 50 letters."""
-    models = list_ollama_models()
-    target = "llama3.2:1b"
-    is_available = any(m["name"] == target for m in models)
-    if is_available:
-        if RICH_AVAILABLE:
-            _console().print(f"[bold blue] ✔️ {target} installed[/bold blue]", end=" ")
-    else:
-        pull_model_with_progress(target)
+    
+    # Try to use cloud API for terminal naming first
     try:
+        session_path = Path.home() / ".claw-coder" / "session.json"
+        if session_path.exists():
+            token_data = json.loads(session_path.read_text(encoding="utf-8"))
+            token = token_data.get("access_token", "")
+            if token:
+                api_url = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-3.onrender.com")
+                
+                ssl_context = ssl.create_default_context()
+                try:
+                    import certifi
+                    ssl_context = ssl.create_default_context(cafile=certifi.where())
+                except ImportError:
+                    pass
+                
+                request_data = json.dumps({"message": text}).encode("utf-8")
+                request = urllib.request.Request(
+                    f"{api_url}/terminal-name",
+                    data=request_data,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                
+                try:
+                    with urllib.request.urlopen(request, timeout=30, context=ssl_context) as resp:
+                        response = json.loads(resp.read().decode("utf-8"))
+                        if response.get("status") == "ok":
+                            return response.get("title", f"{DEFAULT_TAB_PREFIX} · {text[:max_len]}")
+                except urllib.error.HTTPError as exc:
+                    # Fall back to local generation if cloud fails
+                    pass
+                except Exception:
+                    # Fall back to local generation if cloud fails
+                    pass
+    except Exception:
+        # Fall back to local generation if session or cloud fails
+        pass
+    
+    # Fall back to local Ollama for AI generation
+    try:
+        import ollama
+        
+        prefix_prompt = f"""Generate a SHORT terminal title (max 3 words) for this user message: "{text}"
+
+Rules:
+- Maximum 3 words
+- First letter of each word capitalized
+- Simple, direct, brief
+- If nonsense, return "Chat"
+- Examples: "Code Review", "Bug Fix", "API Setup", "Data Analysis"
+
+Return ONLY the title, nothing else."""
+        
         response = ollama.chat(
             model="llama3.2:1b",
-            messages = [{"role": "user", "content": prefix_prompt}]
+            messages=[{"role": "user", "content": prefix_prompt}]
         )
         generate_title = response["message"]["content"].strip()
+        
+        # Clean up the response - remove any extra text
+        generate_title = generate_title.replace('"', '').replace("'", "").strip()
+        
+        # Limit to max 3 words
+        words = generate_title.split()[:3]
+        generate_title = " ".join(words)
+        
+        # Capitalize first letter of each word
+        generate_title = " ".join(word.capitalize() for word in words)
+        
+        # Ensure it's not too long
+        max_len = 20
+        if len(generate_title) > max_len:
+            generate_title = generate_title[:max_len].rsplit(" ", 1)[0] + "…"
+        
+        return f"{DEFAULT_TAB_PREFIX} · {generate_title}"
+        
     except Exception:
-        generate_title = text
+        # Final fallback - use truncated text
+        if len(text) <= max_len:
+            title = text
+        else:
+            cut = text[:max_len]
+            if " " in cut:
+                cut = cut.rsplit(" ", 1)[0]
+            title = cut + "…"
 
-    if len(generate_title) <= max_len:
-        title = generate_title
-    else:
-        cut = generate_title[:max_len]
-        if " " in cut:
-            cut = cut.rsplit(" ", 1)[0]
-        title = cut + "…"
-
-    return f"{DEFAULT_TAB_PREFIX} · {title}"
+        return f"{DEFAULT_TAB_PREFIX} · {title}"
 
 
 def pull_model_with_progress(model_name: str):
@@ -272,11 +331,60 @@ def _format_bytes(value: Any) -> str:
     return f"{size:.1f} PB"
 
 
+def show_simple_welcome_box():
+    """Display a simple static welcome box."""
+    if not RICH_AVAILABLE:
+        print("Welcome to Claw-Coder!")
+        return
+    
+    width = 60
+    height = 8
+    
+    # Box border characters
+    corners = ['╭', '╮', '╰', '╯']
+    horizontal = '─'
+    vertical = '│'
+    
+    # Build the box
+    lines = []
+    
+    # Top border
+    top_line = corners[0] + horizontal * (width - 2) + corners[1]
+    lines.append(top_line)
+    
+    # Empty lines with borders
+    empty_line = vertical + ' ' * (width - 2) + vertical
+    for _ in range(height - 2):
+        lines.append(empty_line)
+    
+    # Bottom border
+    bottom_line = corners[2] + horizontal * (width - 2) + corners[3]
+    lines.append(bottom_line)
+    
+    # Add welcome text in the center
+    welcome_text = "Welcome to Claw-Coder"
+    text_x = (width - len(welcome_text)) // 2
+    text_y = height // 2
+    
+    if 0 <= text_y < len(lines):
+        line = list(lines[text_y])
+        for idx, char in enumerate(welcome_text):
+            if 0 <= text_x + idx < len(line):
+                line[text_x + idx] = char
+        lines[text_y] = ''.join(line)
+    
+    box = '\n'.join(lines)
+    _console().print(f"[bold cyan]{box}[/bold cyan]")
+    _console().print()
+
 def print_banner(model: str, embedding_model: str) -> None:
     if not RICH_AVAILABLE:
         print(f"Claw Coder — model: {model} | embeddings: {embedding_model}")
         return
 
+    # Show simple welcome box
+    show_simple_welcome_box()
+    
     body = Text()
     body.append("Claw Coder\n", style="bold cyan")
     body.append(f"chat  {model}\n", style="white")

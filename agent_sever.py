@@ -29,8 +29,8 @@ TAVILY_API_KEY    = os.getenv("TAVILY_API_KEY", "")
 DODO_PAYMENTS_API_KEY = os.getenv("DODO_PAYMENTS_API_KEY", "")
 DODO_PAYMENTS_WEBHOOK_KEY = os.getenv("DODO_PAYMENTS_WEBHOOK_KEY", "")
 DODO_PAYMENTS_BASE_URL = os.getenv("DODO_PAYMENTS_BASE_URL", "https://test.dodopayments.com")
-DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", os.getenv("DODO_PRODUCT_ID", ""))
-DODO_MONTHLY_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", os.getenv("DODO_CREDITS_PER_PURCHASE", "1000")))
+DODO_PLUS_PRODUCT_ID = os.getenv("DODO_PLUS_PRODUCT_ID", "")
+DODO_PLUS_CREDITS = int(os.getenv("DODO_PLUS_CREDITS", "1000"))
 DODO_TOPUP_PRODUCT_ID = os.getenv("DODO_TOPUP_PRODUCT_ID", "")
 DODO_TOPUP_CREDITS = int(os.getenv("DODO_TOPUP_CREDITS", "500"))
 DODO_RETURN_URL = os.getenv("DODO_RETURN_URL", "https://claw-coder-3.onrender.com")
@@ -76,7 +76,7 @@ PLANS: dict[str, dict] = {
     "plus": {
         "product_id": os.getenv("DODO_PLUS_PRODUCT_ID", ""),
         "price_usd": 25.00,
-        "tool_credits": os.getenv("DODO_PLUS_CREDITS"),
+        "tool_credits": int(os.getenv("DODO_PLUS_CREDITS", "")),
         "workspace_credits": 0,       # starter has no workspace access at all
         "tool_soft_limit": 100,       # per-tool free-ish ceiling before credits kick in
         "workspace_allowed": False,
@@ -84,16 +84,16 @@ PLANS: dict[str, dict] = {
     "pro": {
         "product_id": os.getenv("DODO_PRO_PRODUCT_ID", ""),
         "price_usd": 50.00,
-        "tool_credits": os.getenv("DODO_PRO_CREDITS", ""),
-        "workspace_credits": os.getenv("DODO_PRO_WORKSPACE_CREDITS", ""),
+        "tool_credits": int(os.getenv("DODO_PRO_CREDITS", "")),
+        "workspace_credits": int(os.getenv("DODO_PRO_WORKSPACE_CREDITS", "")),
         "tool_soft_limit": 400,
         "workspace_allowed": True,
     },
     "max": {
         "product_id": os.getenv("DODO_MAX_PRODUCT_ID", ""),
         "price_usd": 100.00,
-        "tool_credits": os.getenv("DODO_MAX_CREDITS", ""),
-        "workspace_credits": os.getenv("DODO_MAX_WORKSPACE_CREDITS", ""),
+        "tool_credits": int(os.getenv("DODO_MAX_CREDITS", "")),
+        "workspace_credits": int(os.getenv("DODO_MAX_WORKSPACE_CREDITS", "")),
         "tool_soft_limit": 1000,
         "workspace_allowed": True,
     }
@@ -497,11 +497,85 @@ def workspace_connect(authorization: str = Header(...)):
                 "message": (
                     f"Workspace connections cost {WORKSPACE_CONNECT_COST} workspace credits "
                     f"(you have {get_credit_balance(user_id, 'workspace')} workspace credits). "
-                    "Run `claw buy` to subscribe for workspace credits, or wait for next month's allotment."
+                    "Run `claw upgrade-plan` to subscribe for workspace credits, or wait for next month's allotment."
                 ),
             },
         )
     return {"allowed": True, "credits": get_credit_balance(user_id, "workspace")}
+
+class TerminalNamingRequest(BaseModel):
+    message: str
+
+@app.post("/terminal-name")
+def generate_terminal_name(body: TerminalNamingRequest, authorization: str = Header(...)):
+    """
+    Generate a terminal name from user message using cloud AI.
+    Consumes tool credits for the AI generation.
+    """
+    user_id = verify_token(authorization)
+    plan = get_user_plan(user_id)
+    
+    # Check and consume credits for terminal naming
+    cost = TOOL_CREDIT_COSTS.get("search_stuff", 10)  # Use similar cost to search
+    if not consume_credit(user_id, "terminal_naming", amount=cost, bucket="tools"):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "credits_required",
+                "credits": get_credit_balance(user_id, "tools"),
+                "cost": cost,
+                "message": (
+                    f"Terminal naming costs {cost} tool credits "
+                    f"(you have {get_credit_balance(user_id, 'tools')} tool credits). "
+                    "Run `claw topup` to buy extra pay-as-you-go credits."
+                ),
+            },
+        )
+    
+    try:
+        import ollama
+        # Use a small model for terminal naming
+        model = "llama3.2:1b"
+        
+        prefix_prompt = f"""Generate a SHORT terminal title (max 3 words) for this user message: "{body.message}"
+
+Rules:
+- Maximum 3 words
+- First letter of each word capitalized
+- Simple, direct, brief
+- If nonsense, return "Chat"
+- Examples: "Code Review", "Bug Fix", "API Setup", "Data Analysis"
+
+Return ONLY the title, nothing else."""
+        
+        response = ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": prefix_prompt}]
+        )
+        generate_title = response["message"]["content"].strip()
+        
+        # Clean up the response - remove any extra text
+        generate_title = generate_title.replace('"', '').replace("'", "").strip()
+        
+        # Limit to max 3 words
+        words = generate_title.split()[:3]
+        generate_title = " ".join(words)
+        
+        # Capitalize first letter of each word
+        generate_title = " ".join(word.capitalize() for word in words)
+        
+        # Ensure it's not too long
+        max_len = 20
+        if len(generate_title) > max_len:
+            generate_title = generate_title[:max_len].rsplit(" ", 1)[0] + "…"
+        
+        return {
+            "status": "ok",
+            "title": f"Claw-Coder · {generate_title}",
+            "credits_remaining": get_credit_balance(user_id, "tools")
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate terminal name: {exc}") from exc
 
 @app.get("/usage")
 def get_usage(authorization: str = Header(...)):
