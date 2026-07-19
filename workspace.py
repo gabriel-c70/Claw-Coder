@@ -381,12 +381,12 @@ class WorkspaceRemoteClient:
             
             # Check if the root exists
             check_cmd = f"test -d {shlex.quote(root)} && echo 'exists' || echo 'notfound'"
-            check_result = self._ssh(target, check_cmd, timeout=15)
+            check_result = self._ssh(target, check_cmd, timeout=100)
             if check_result.returncode != 0 or "notfound" in check_result.stdout:
                 continue
             
             command = f"find {shlex.quote(root)} -mindepth 1 -maxdepth 1 -type d 2>/dev/null"
-            result = self._ssh(target, command, timeout=15)
+            result = self._ssh(target, command, timeout=100)
             if result.returncode != 0:
                 continue
             candidates = [line.strip() for line in result.stdout.splitlines() if line.strip()]
@@ -401,14 +401,14 @@ class WorkspaceRemoteClient:
                 target,
                 " ; ".join(
                     f"test -d {shlex.quote(c + '/.git')} && printf '%s\\n' {shlex.quote(c)}" for c in candidates),
-                timeout=15,
+                timeout=100,
             )
             git_dirs = [line.strip() for line in git_check.stdout.splitlines() if line.strip()]
             if len(git_dirs) == 1:
                 return git_dirs[0]
 
             # Still ambiguous — Codespaces sets $RepositoryName; use it if it matches.
-            repo_env = self._ssh(target, "echo $RepositoryName", timeout=15)
+            repo_env = self._ssh(target, "echo $RepositoryName", timeout=100)
             repo_name = repo_env.stdout.strip()
             if repo_name:
                 for c in candidates:
@@ -420,7 +420,7 @@ class WorkspaceRemoteClient:
                 target,
                 " ; ".join(
                     f"test -f {shlex.quote(c + '/package.json')} -o test -f {shlex.quote(c + '/requirements.txt')} -o test -f {shlex.quote(c + '/setup.py')} && printf '%s\\n' {shlex.quote(c)}" for c in candidates),
-                timeout=15,
+                timeout=100,
             )
             project_dirs = [line.strip() for line in project_check.stdout.splitlines() if line.strip()]
             if len(project_dirs) == 1:
@@ -431,7 +431,7 @@ class WorkspaceRemoteClient:
 
         # Nothing matched any known convention — caller falls back to $HOME itself
         # or asks the user for an explicit path.
-        home_check = self._ssh(target, "echo $HOME", timeout=15)
+        home_check = self._ssh(target, "echo $HOME", timeout=100)
         home_dir = home_check.stdout.strip()
         return home_dir or None
 
