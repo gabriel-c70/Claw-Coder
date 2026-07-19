@@ -69,7 +69,14 @@ response = ollama.chat(
     tools=payload.get("tools"),
     stream=False,
 )
-print(json.dumps(response, ensure_ascii=False))
+
+# Newer ollama-python returns typed objects (ChatResponse, Message, etc.),
+# not plain dicts. Convert before serializing, with a fallback in case the
+# remote has an older/different version installed.
+if hasattr(response, "model_dump"):
+    response = response.model_dump()
+
+print(json.dumps(response, ensure_ascii=False, default=lambda o: getattr(o, "__dict__", str(o))))
 """
 
 
@@ -358,7 +365,7 @@ class WorkspaceRemoteClient:
                 timeout=40,
             )
             # Re-verify instead of assuming success — this is the actual fix.
-            recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=30)
+            recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=60)
             if recheck.stdout.strip() != "yes":
                 log_tail = self._ssh(target, "tail -n 20 /tmp/ollama.log 2>/dev/null", timeout=100)
                 return (
@@ -389,7 +396,7 @@ class WorkspaceRemoteClient:
         for root in candidate_roots:
             # Expand $HOME if needed
             if root == "$HOME":
-                home_check = self._ssh(target, "echo $HOME", timeout=15)
+                home_check = self._ssh(target, "echo $HOME", timeout=100)
                 if home_check.returncode == 0:
                     root = home_check.stdout.strip()
                 else:
