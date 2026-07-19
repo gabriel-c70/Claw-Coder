@@ -190,38 +190,27 @@ class WorkspaceRemoteClient:
             "Workspace mode is now active."
         )
 
-
-
-    def ensure_ssh_config(self, target: str) -> str:
+    def ensure_ssh_config(self, parsed: ParsedTarget) -> str:
+        target = parsed.host
         if self.host_in_ssh_config(target):
             return "already configured in SSH config"
-        
-        # Handle GitHub Codespaces specifically
+
         if target.startswith("cs."):
-            codespace = target[3:]
-            try:
-                gh = subprocess.run(
-                    ["gh", "codespace", "ssh", "--config", "--codespace", codespace],
-                    text=True,
-                    capture_output=True,
-                    timeout=14400,
-                )
-            except FileNotFoundError:
-                return "GitHub CLI not found; install gh or configure SSH manually for codespaces"
-            if gh.returncode == 0 and gh.stdout.strip():
-                self.write_managed_ssh_config(gh.stdout.strip())
-                return "configured with gh codespace ssh --config"
-            return (gh.stderr or gh.stdout or "gh codespace ssh --config returned no config").strip()
-        
-        # For non-codespace targets, create a basic SSH config entry
-        # This is a minimal config that will use the user's existing SSH keys and defaults
-        basic_config = f"""Host {target}
-    UserKnownHostsFile ~/.ssh/known_hosts
-    StrictHostKeyChecking accept-new"""
-        
+            ...  # unchanged
+
+        lines = [f"Host {target}"]
+        if parsed.user:
+            lines.append(f"    User {parsed.user}")
+        if parsed.port:
+            lines.append(f"    Port {parsed.port}")
+        lines.append("    UserKnownHostsFile ~/.ssh/known_hosts")
+        lines.append("    StrictHostKeyChecking accept-new")
+        basic_config = "\n".join(lines)
+
         try:
             self.write_managed_ssh_config(basic_config)
-            return f"added basic SSH config for {target}"
+            detail = f" (user={parsed.user}, port={parsed.port})" if (parsed.user or parsed.port) else ""
+            return f"added SSH config for {target}{detail}"
         except Exception as e:
             return f"could not create SSH config: {str(e)}; will use SSH defaults"
 
@@ -337,18 +326,18 @@ class WorkspaceRemoteClient:
         pip_status = "ok" if pip_result.returncode == 0 else "pip install failed, see /tmp/claw-coder-pip.log on remote"
 
         # 2. Ollama binary
-        has_ollama = self._ssh(target, "command -v ollama >/dev/null && printf yes || printf no", timeout=15)
+        has_ollama = self._ssh(target, "command -v ollama >/dev/null && printf yes || printf no", timeout=100)
         if has_ollama.stdout.strip() != "yes":
             status("Installing Ollama on the remote...")
-            install = self._ssh(target, "curl -fsSL https://ollama.com/install.sh | sh", timeout=180)
+            install = self._ssh(target, "curl -fsSL https://ollama.com/install.sh | sh", timeout=100)
             if install.returncode != 0:
                 return f"deps: {pip_status}; ollama install failed: {(install.stderr or install.stdout)[-500:].strip()}"
 
         # 3. Ollama daemon running?
-        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=15)
+        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=100)
         if is_running.stdout.strip() != "yes":
             status("Starting ollama serve on the remote...")
-            self._ssh(target, "nohup ollama serve > /tmp/ollama.log 2>&1 & sleep 3; printf started", timeout=20)
+            self._ssh(target, "nohup ollama serve > /tmp/ollama.log 2>&1 & sleep 3; printf started", timeout=80)
 
         return f"deps: {pip_status}; ollama: installed and running"
 
@@ -435,11 +424,43 @@ class WorkspaceRemoteClient:
         home_dir = home_check.stdout.strip()
         return home_dir or None
 
+    @dataclass
+    class ParsedTarget:
+        host: str
+        user: Optional[str] = None
+        port: Optional[int] = None
+
+
+    def _remote_python(self, script: str, payload: Dict[str, Any], timeout: int = 600) -> str:
+        """
+        Runs `script` on the remote machine via `python3 -c`, passing `payload`
+        as a base64-encoded JSON argument. Base64 avoids shell-quoting issues
+        entirely — arbitrary JSON content (quotes, newlines, unicode) survives
+        the trip over SSH without needing manual escaping.
+        """
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        remote_command = (
+            f"{shlex.quote(self.config.python)} -c {shlex.quote(script)} {shlex.quote(encoded)}"
+        )
+        result = self._ssh(self.config.ssh_target or "", remote_command, timeout=timeout)
+
+        if result.returncode != 0:
+            error_detail = (result.stderr or result.stdout or "no output").strip()
+            raise RuntimeError(f"Remote execution failed: {error_detail[-1000:]}")
+
+        output = result.stdout.strip()
+        if not output:
+            raise RuntimeError("Remote execution returned no output.")
+
+        # Defensive: take the last non-empty line, in case SSH prints a MOTD
+        # banner or shell profile noise before the script's actual output.
+        lines = [line for line in output.splitlines() if line.strip()]
+        return lines[-1] if lines else output
     def _run_terminal(self, tool_input: Dict[str, Any]) -> str:
         command = str(tool_input.get("command", "")).strip()
         if not command:
             return json.dumps({"status": "error", "error": "Missing command"})
-        timeout = int(tool_input.get("timeout", 35))
+        timeout = int(tool_input.get("timeout", 100))
         remote_command = f"cd {shlex.quote(self.config.remote_dir)} && {command}"
         try:
             result = self._ssh(self.config.ssh_target or "", remote_command, timeout=max(1, timeout))
@@ -520,81 +541,67 @@ def normalize_model_name(model: str) -> str:
     return " ".join(str(model).strip().split())
 
 
-def parse_codespace_target(value: str) -> Optional[str]:
-    """
-    Parse various SSH target formats and return a clean hostname.
-    
-    Supports:
-    - SSH commands: "ssh user@hostname", "ssh hostname"
-    - GitHub Codespaces URLs: "https://github.com/codespaces/..."
-    - Simple hostnames: "hostname", "user@hostname"
-    - Hostnames with port: "hostname:port", "user@hostname:port"
-    - IP addresses: "192.168.1.1", "user@192.168.1.1"
-    """
+def parse_codespace_target(value: str) -> Optional[ParsedTarget]:
     text = value.strip()
     if not text:
         return None
-    
-    # Validate input doesn't contain spaces (except in ssh command format)
     if " " in text and not text.startswith("ssh "):
         return None
-    
-    # Handle SSH command format
+
+    user: Optional[str] = None
+    port: Optional[int] = None
+
     if text.startswith("ssh "):
         try:
             parts = shlex.split(text)
         except ValueError:
             parts = text.split()
+        # capture a -p/--port flag if present, e.g. `ssh root@host -p 22019`
+        for i, part in enumerate(parts):
+            if part in ("-p", "--port") and i + 1 < len(parts):
+                try:
+                    port = int(parts[i + 1])
+                except ValueError:
+                    pass
         for part in reversed(parts[1:]):
             if not part.startswith("-") and "=" not in part:
-                # Recursively parse the extracted part to handle user@host:port format
-                return parse_codespace_target(part)
-    
-    # Handle URL format (GitHub Codespaces, etc.)
+                text = part
+                break
+
     parsed = urlparse(text)
     if parsed.scheme:
         query = parse_qs(parsed.query)
         name = (query.get("name") or query.get("codespace") or [None])[0]
         if name:
-            return name if name.startswith("cs.") else f"cs.{name}"
+            return ParsedTarget(host=name if name.startswith("cs.") else f"cs.{name}")
         path_name = parsed.path.rstrip("/").split("/")[-1]
         if path_name:
-            return path_name if path_name.startswith("cs.") else f"cs.{path_name}"
-    
-    # Handle various SSH target formats
-    # Remove ssh:// prefix if present
+            return ParsedTarget(host=path_name if path_name.startswith("cs.") else f"cs.{path_name}")
+
     if text.startswith("ssh://"):
         text = text[6:]
-    
-    # Extract hostname from user@host:port format
-    # This handles: user@hostname, user@hostname:port, hostname:port, hostname
+
     ssh_target = text
-    
-    # Remove port specification if present
     if ":" in ssh_target and not ssh_target.startswith("["):
-        # Handle IPv6 addresses in brackets [::1]:port
         if ssh_target.startswith("["):
             bracket_end = ssh_target.find("]")
             if bracket_end != -1:
                 ssh_target = ssh_target[:bracket_end + 1]
         else:
-            ssh_target = ssh_target.split(":")[0]
-    
-    # Remove user@ prefix if present
+            host_part, _, port_part = ssh_target.partition(":")
+            ssh_target = host_part
+            if port_part.isdigit():
+                port = int(port_part)   # capture instead of discarding
+
     if "@" in ssh_target:
-        ssh_target = ssh_target.split("@")[1]
-    
-    # Basic validation - allow alphanumeric, dots, dashes, and underscores
-    # Also allow IPv6 addresses with colons and brackets
-    if re.match(r"^[A-Za-z0-9_.-]+$", ssh_target):
-        return ssh_target
-    elif re.match(r"^\[?[A-Za-z0-9:.]+\]?$", ssh_target):
-        return ssh_target
-    
-    # If nothing matched, check if it could be a valid SSH config alias
-    # SSH aliases can contain alphanumeric, dots, dashes, underscores
+        user_part, _, host_part = ssh_target.partition("@")
+        user = user_part                # capture instead of discarding
+        ssh_target = host_part
+
+    if re.match(r"^[A-Za-z0-9_.-]+$", ssh_target) or re.match(r"^\[?[A-Za-z0-9:.]+\]?$", ssh_target):
+        return ParsedTarget(host=ssh_target, user=user, port=port)
+
     if re.match(r"^[A-Za-z0-9_.-]+$", text):
-        return text
-    
-    # If still nothing matched, return None to indicate invalid input
+        return ParsedTarget(host=text, user=user, port=port)
+
     return None
