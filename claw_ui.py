@@ -117,9 +117,9 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
 Rules:
 - Maximum 3 words
 - First letter of each word capitalized
-- Simple, direct, brief
+- Simple, direct, brief, and really straight to the point
 - If nonsense, return "Chat"
-- Examples: "Code Review", "Bug Fix", "API Setup", "Data Analysis"
+- Examples: "Code Review", "Bug Fix", "API Setup", "Data Analysis", "Greetings"
 
 Return ONLY the title, nothing else."""
         
