@@ -150,20 +150,27 @@ class WorkspaceRemoteClient:
         config_message = self.ensure_ssh_config(target)
 
         status("Checking on the connection...")
-        verify = self._ssh(target, "printf claw-workspace-ready", timeout=300)
+        verify = self._ssh(target, "printf claw-workspace-ready", timeout=30)
         if verify.returncode != 0:
             error_msg = (verify.stderr or verify.stdout).strip()
+            hint = ""
+            if "Permission denied" in error_msg or "publickey" in error_msg:
+                hint = (
+                    "\nThis host requires password authentication, which claw-coder "
+                    "doesn't support directly. Set up key-based access first:\n"
+                    f"  ssh-copy-id {target}\n"
+                    "(or add your public key via your provider's dashboard), then try /workspace again.\n"
+                )
             return (
                 f"SSH config step: {config_message}\n"
                 f"Could not connect to {target}.\n"
-                f"Error: {error_msg}\n\n"
-                f"Troubleshooting:\n"
+                f"Error: {error_msg}{hint}\n"
+                f"\nTroubleshooting:\n"
                 f"  1. Ensure the host is reachable: ssh {target}\n"
                 f"  2. Check your SSH config: cat ~/.ssh/config\n"
                 f"  3. Verify authentication: ssh -v {target}\n"
                 f"  4. For GPU servers, ensure SSH is running and port is open\n"
             )
-
         self.config.mode = "ssh"
         self.config.ssh_target = target
 
@@ -497,7 +504,13 @@ class WorkspaceRemoteClient:
     @staticmethod
     def _ssh(target: str, command: str, timeout: int) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["ssh", target, command],
+            [
+                "ssh",
+                "-o", "BatchMode=yes",  # fail immediately instead of prompting for a password
+                "-o", "ConnectTimeout=40",  # don't hang on an unreachable/asleep host either
+                target,
+                command,
+            ],
             text=True,
             capture_output=True,
             timeout=timeout,
@@ -541,67 +554,65 @@ def normalize_model_name(model: str) -> str:
     return " ".join(str(model).strip().split())
 
 
-def parse_codespace_target(value: str) -> Optional[ParsedTarget]:
+def parse_codespace_target(value: str) -> Optional[str]:
+    """
+    Parse various SSH target formats and return a clean hostname.
+
+    Supports:
+    - SSH commands: "ssh user@hostname", "ssh hostname"
+    - GitHub Codespaces URLs: "https://github.com/codespaces/..."
+    - Simple hostnames: "hostname", "user@hostname"
+    - Hostnames with port: "hostname:port", "user@hostname:port"
+    - IP addresses: "192.168.1.1", "user@192.168.1.1"
+    """
     text = value.strip()
     if not text:
         return None
+
     if " " in text and not text.startswith("ssh "):
         return None
-
-    user: Optional[str] = None
-    port: Optional[int] = None
 
     if text.startswith("ssh "):
         try:
             parts = shlex.split(text)
         except ValueError:
             parts = text.split()
-        # capture a -p/--port flag if present, e.g. `ssh root@host -p 22019`
-        for i, part in enumerate(parts):
-            if part in ("-p", "--port") and i + 1 < len(parts):
-                try:
-                    port = int(parts[i + 1])
-                except ValueError:
-                    pass
         for part in reversed(parts[1:]):
             if not part.startswith("-") and "=" not in part:
-                text = part
-                break
+                return parse_codespace_target(part)
 
     parsed = urlparse(text)
     if parsed.scheme:
         query = parse_qs(parsed.query)
         name = (query.get("name") or query.get("codespace") or [None])[0]
         if name:
-            return ParsedTarget(host=name if name.startswith("cs.") else f"cs.{name}")
+            return name if name.startswith("cs.") else f"cs.{name}"
         path_name = parsed.path.rstrip("/").split("/")[-1]
         if path_name:
-            return ParsedTarget(host=path_name if path_name.startswith("cs.") else f"cs.{path_name}")
+            return path_name if path_name.startswith("cs.") else f"cs.{path_name}"
 
     if text.startswith("ssh://"):
         text = text[6:]
 
     ssh_target = text
+
     if ":" in ssh_target and not ssh_target.startswith("["):
         if ssh_target.startswith("["):
             bracket_end = ssh_target.find("]")
             if bracket_end != -1:
                 ssh_target = ssh_target[:bracket_end + 1]
         else:
-            host_part, _, port_part = ssh_target.partition(":")
-            ssh_target = host_part
-            if port_part.isdigit():
-                port = int(port_part)   # capture instead of discarding
+            ssh_target = ssh_target.split(":")[0]
 
     if "@" in ssh_target:
-        user_part, _, host_part = ssh_target.partition("@")
-        user = user_part                # capture instead of discarding
-        ssh_target = host_part
+        ssh_target = ssh_target.split("@")[1]
 
-    if re.match(r"^[A-Za-z0-9_.-]+$", ssh_target) or re.match(r"^\[?[A-Za-z0-9:.]+\]?$", ssh_target):
-        return ParsedTarget(host=ssh_target, user=user, port=port)
+    if re.match(r"^[A-Za-z0-9_.-]+$", ssh_target):
+        return ssh_target
+    elif re.match(r"^\[?[A-Za-z0-9:.]+\]?$", ssh_target):
+        return ssh_target
 
     if re.match(r"^[A-Za-z0-9_.-]+$", text):
-        return ParsedTarget(host=text, user=user, port=port)
+        return text
 
     return None
