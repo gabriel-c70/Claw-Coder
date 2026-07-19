@@ -197,27 +197,35 @@ class WorkspaceRemoteClient:
             "Workspace mode is now active."
         )
 
-    def ensure_ssh_config(self, parsed: ParsedTarget) -> str:
-        target = parsed.host
+    def ensure_ssh_config(self, target: str) -> str:
         if self.host_in_ssh_config(target):
             return "already configured in SSH config"
 
+        # Handle GitHub Codespaces specifically
         if target.startswith("cs."):
-            ...  # unchanged
+            codespace = target[3:]
+            try:
+                gh = subprocess.run(
+                    ["gh", "codespace", "ssh", "--config", "--codespace", codespace],
+                    text=True,
+                    capture_output=True,
+                    timeout=60,
+                )
+            except FileNotFoundError:
+                return "GitHub CLI not found; install gh or configure SSH manually for codespaces"
+            if gh.returncode == 0 and gh.stdout.strip():
+                self.write_managed_ssh_config(gh.stdout.strip())
+                return "configured with gh codespace ssh --config"
+            return (gh.stderr or gh.stdout or "gh codespace ssh --config returned no config").strip()
 
-        lines = [f"Host {target}"]
-        if parsed.user:
-            lines.append(f"    User {parsed.user}")
-        if parsed.port:
-            lines.append(f"    Port {parsed.port}")
-        lines.append("    UserKnownHostsFile ~/.ssh/known_hosts")
-        lines.append("    StrictHostKeyChecking accept-new")
-        basic_config = "\n".join(lines)
+        # For non-codespace targets, create a basic SSH config entry
+        basic_config = f"""Host {target}
+        UserKnownHostsFile ~/.ssh/known_hosts
+        StrictHostKeyChecking accept-new"""
 
         try:
             self.write_managed_ssh_config(basic_config)
-            detail = f" (user={parsed.user}, port={parsed.port})" if (parsed.user or parsed.port) else ""
-            return f"added SSH config for {target}{detail}"
+            return f"added basic SSH config for {target}"
         except Exception as e:
             return f"could not create SSH config: {str(e)}; will use SSH defaults"
 
@@ -430,13 +438,6 @@ class WorkspaceRemoteClient:
         home_check = self._ssh(target, "echo $HOME", timeout=100)
         home_dir = home_check.stdout.strip()
         return home_dir or None
-
-    @dataclass
-    class ParsedTarget:
-        host: str
-        user: Optional[str] = None
-        port: Optional[int] = None
-
 
     def _remote_python(self, script: str, payload: Dict[str, Any], timeout: int = 600) -> str:
         """
