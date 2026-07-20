@@ -1026,8 +1026,8 @@ async function main() {
           console.log("  📝 Starter plan is used first. After that, paid credits are used.");
           console.log("  🚀 Run `claw upgrade-plan` to subscribe or `claw topup` for extra credits.\n");
         } else {
-          console.log("  ⚡ Pro plan: Each tool has a soft limit of 400 calls/month.");
-          console.log("  💳 After reaching the soft limit, paid credits are used automatically.\n");
+          console.log("  ⚡ Pro plan: Each tool has a soft limit that are within the paid credits.");
+          console.log("  💳 After reaching the soft limit the available or the remaining credits will still be consumed if there are no remaining credits you can run claw topup or claw upgrade-plan anytime.\n");
         }
       })
       .catch((err) => {
