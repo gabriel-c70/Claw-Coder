@@ -126,7 +126,14 @@ TOOL_CREDIT_COSTS: dict[str, int] = {
     "execute_code_in_docker": 30,
     "search_stuff":           40,
     "run_tests":              30,
-    "ingest_paths_knowledge": 40,
+    "ingest_paths_knowledge": 30,
+    "extract_functions":      2,
+    "search_code":            8,
+    "run_terminal":           3,
+    "git_apply_patch":        5,
+    "gnu_patch":              6
+
+
 }
 WORKSPACE_CONNECT_COST = 20
 DODO_MONTHLY_TOOL_CREDITS = int(os.getenv("DODO_MONTHLY_CREDITS", "10000"))

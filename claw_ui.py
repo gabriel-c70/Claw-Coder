@@ -234,7 +234,7 @@ def friendly_status(status_text: str) -> str:
     }
     if status_text in mapping:
         return mapping[status_text]
-    if status_text.startswith("pulling") and re.search(r"[0-9a-f]{6,}", status_text):
+    if status_text.startswith("Internalizing") and re.search(r"[0-9a-f]{6,}", status_text):
         return "Dribbling tasks for AI model"
     return status_text.capitalize()
 
