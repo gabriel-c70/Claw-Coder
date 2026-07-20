@@ -135,11 +135,49 @@ function commandExists(command, args = ["--version"]) {
   return result.status === 0;
 }
 
+function getPythonVersion(pythonCommand) {
+  const result = run(pythonCommand, ["--version"], { stdio: "pipe" });
+  if (result.status !== 0) return null;
+  
+  const versionMatch = (result.stdout || result.stderr || "").match(/Python (\d+)\.(\d+)/);
+  if (!versionMatch) return null;
+  
+  return {
+    major: parseInt(versionMatch[1]),
+    minor: parseInt(versionMatch[2]),
+    full: `${versionMatch[1]}.${versionMatch[2]}`
+  };
+}
+
+function isPythonVersionCompatible(pythonCommand) {
+  const version = getPythonVersion(pythonCommand);
+  if (!version) return false;
+  
+  // Python 3.8+ should work, but we prefer 3.11 or 3.12
+  // We'll return true for all modern Python versions and handle issues gracefully
+  return version.major === 3 && version.minor >= 8;
+}
+
+function getPythonVersionPreference(pythonCommand) {
+  const version = getPythonVersion(pythonCommand);
+  if (!version) return { preference: 'unknown', compatible: false };
+  
+  if (version.major === 3 && version.minor === 12) return { preference: 'preferred', compatible: true };
+  if (version.major === 3 && version.minor === 11) return { preference: 'preferred', compatible: true };
+  if (version.major === 3 && version.minor === 10) return { preference: 'good', compatible: true };
+  if (version.major === 3 && version.minor === 9) return { preference: 'acceptable', compatible: true };
+  if (version.major === 3 && version.minor === 8) return { preference: 'acceptable', compatible: true };
+  if (version.major === 3 && version.minor >= 13) return { preference: 'experimental', compatible: true };
+  
+  return { preference: 'unsupported', compatible: false };
+}
+
 function findPython() {
   if (process.env.CLAW_PYTHON) {
     return process.env.CLAW_PYTHON;
   }
 
+  // Always prioritize Claw-Coder's own virtual environment
   const venvCandidates = process.platform === "win32"
     ? [
         path.join(packageRoot, "venv", "Scripts", "python.exe"),
@@ -152,12 +190,54 @@ function findPython() {
         path.join(packageRoot, ".venv", "bin", "python"),
       ];
 
+  // First check if Claw-Coder venv exists and use it
   for (const candidate of venvCandidates) {
     if (fs.existsSync(candidate)) {
-      return candidate;
+      const versionInfo = getPythonVersionPreference(candidate);
+      const version = getPythonVersion(candidate);
+      
+      if (versionInfo.compatible) {
+        if (versionInfo.preference === 'preferred') {
+          return candidate; // No warning for preferred versions
+        } else if (versionInfo.preference === 'experimental') {
+          console.warn(`Note: Using Python ${version?.full || 'unknown'} (experimental support)`);
+          console.warn(`  Some features may not work perfectly. Consider using Python 3.11 or 3.12 for best compatibility.`);
+        } else if (versionInfo.preference === 'acceptable') {
+          console.warn(`Note: Using Python ${version?.full || 'unknown'} (acceptable support)`);
+          console.warn(`  Python 3.11 or 3.12 recommended for best performance.`);
+        }
+        return candidate;
+      } else {
+        console.warn(`Warning: Claw-Coder venv uses Python ${version?.full || 'unknown'} (unsupported)`);
+        console.warn(`  Python 3.8+ required. Consider recreating the venv with a newer Python version.`);
+        return candidate; // Still try to use it
+      }
     }
   }
 
+  // If no Claw-Coder venv, look for system Python with compatible version
+  // Only warn if we're in the Claw-Coder directory (users can run claw from anywhere)
+  if (process.cwd() === packageRoot) {
+    console.warn(`Note: No Claw-Coder virtual environment found.`);
+    console.warn(`  It's recommended to run 'claw setup' to create a proper isolated environment.`);
+  }
+  
+  // If no Claw-Coder venv, look for system Python with compatible version
+  const systemCandidates = ["python3.12", "python3.11", "python3.10", "python3.9", "python3.8", "python3", "python"];
+  for (const candidate of systemCandidates) {
+    if (commandExists(candidate)) {
+      const versionInfo = getPythonVersionPreference(candidate);
+      if (versionInfo.compatible) {
+        const version = getPythonVersion(candidate);
+        if (versionInfo.preference !== 'preferred') {
+          console.warn(`Note: Using system Python ${version?.full || 'unknown'} (${versionInfo.preference} support)`);
+        }
+        return candidate;
+      }
+    }
+  }
+
+  // Fallback to any available Python if no compatible version found
   if (commandExists("python3")) {
     return "python3";
   }
@@ -298,8 +378,22 @@ function ensureDependencies(python) {
     return true; // All dependencies present
   }
   
+  // Check Python version and provide helpful information
+  const pythonVersion = getPythonVersion(python);
+  const versionInfo = getPythonVersionPreference(python);
+  
   console.log(`Missing Python dependencies: ${missing.join(', ')}`);
   console.log("Installing missing dependencies automatically...");
+  console.log(`Using Python: ${python} (${pythonVersion?.full || 'unknown'})`);
+  
+  if (versionInfo.preference === 'experimental') {
+    console.warn(`Note: Python ${pythonVersion?.full} is experimental - some dependencies may have compatibility issues.`);
+  } else if (versionInfo.preference === 'acceptable') {
+    console.warn(`Note: Python ${pythonVersion?.full} has acceptable support - Python 3.11/3.12 recommended.`);
+  } else if (!versionInfo.compatible) {
+    console.warn(`Warning: Python ${pythonVersion?.full} may not be compatible with all dependencies.`);
+    console.warn(`  Python 3.8+ recommended. Attempting installation anyway...`);
+  }
   
   if (!fs.existsSync(requirementsFile)) {
     console.error(`Missing requirements file: ${requirementsFile}`);
@@ -307,10 +401,24 @@ function ensureDependencies(python) {
     return false;
   }
   
-  const upgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip"], { cwd: packageRoot });
+  // Skip pip upgrade if it fails - it's not critical
+  const upgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip"], { cwd: packageRoot, stdio: "pipe" });
   if (upgradePip.status !== 0) {
-    console.error("Failed to upgrade pip. Please run `claw setup` manually.");
-    return false;
+    // Check if pip itself is broken (common with Python 3.13)
+    const errorOutput = (upgradePip.stderr || upgradePip.stdout || "").toLowerCase();
+    if (errorOutput.includes("importerror") || errorOutput.includes("cannot import")) {
+      console.error("Error: pip in this Python environment is broken or incompatible.");
+      console.error(`This is common with Python ${pythonVersion?.full || 'unknown'}.`);
+      console.error("Solutions:");
+      console.error("1. Use a different Python version (3.11 or 3.12 recommended):");
+      console.error("   export CLAW_PYTHON=$(which python3.12)");
+      console.error("2. Or fix pip in this environment:");
+      console.error("   python -m ensurepip --upgrade");
+      console.error("3. Or use Claw-Coder's built-in environment by running:");
+      console.error("   claw setup");
+      return false;
+    }
+    console.warn("Warning: Failed to upgrade pip (this is usually not critical)");
   }
   
   const result = run(
@@ -320,6 +428,20 @@ function ensureDependencies(python) {
   );
   
   if (result.status !== 0) {
+    // Check if the installation failed due to pip issues
+    const errorOutput = (result.stderr || result.stdout || "").toLowerCase();
+    if (errorOutput.includes("importerror") || errorOutput.includes("cannot import")) {
+      console.error("Error: pip in this Python environment is broken or incompatible.");
+      console.error(`This is common with Python ${pythonVersion?.full || 'unknown'}.`);
+      console.error("Solutions:");
+      console.error("1. Use a different Python version (3.11 or 3.12 recommended):");
+      console.error("   export CLAW_PYTHON=$(which python3.12)");
+      console.error("2. Or fix pip in this environment:");
+      console.error("   python -m ensurepip --upgrade");
+      console.error("3. Or use Claw-Coder's built-in environment by running:");
+      console.error("   claw setup");
+      return false;
+    }
     console.error("Failed to install Python dependencies automatically.");
     console.error("Please run `claw setup` manually to install dependencies.");
     return false;
@@ -365,12 +487,18 @@ function bootstrapPythonSpec() {
     ? [
         { command: "py", prefixArgs: ["-3.12"] },
         { command: "py", prefixArgs: ["-3.11"] },
+        { command: "py", prefixArgs: ["-3.10"] },
+        { command: "py", prefixArgs: ["-3.9"] },
+        { command: "py", prefixArgs: ["-3.8"] },
         { command: "python3", prefixArgs: [] },
         { command: "python", prefixArgs: [] },
       ]
     : [
         { command: "python3.12", prefixArgs: [] },
         { command: "python3.11", prefixArgs: [] },
+        { command: "python3.10", prefixArgs: [] },
+        { command: "python3.9", prefixArgs: [] },
+        { command: "python3.8", prefixArgs: [] },
         { command: "python3", prefixArgs: [] },
         { command: "python", prefixArgs: [] },
       ];
@@ -378,7 +506,10 @@ function bootstrapPythonSpec() {
   for (const spec of specs) {
     const versionArgs = spec.prefixArgs.length ? [...spec.prefixArgs, "--version"] : ["--version"];
     if (commandExists(spec.command, versionArgs)) {
-      return spec;
+      // Check if the Python version is compatible
+      if (isPythonVersionCompatible(spec.command)) {
+        return spec;
+      }
     }
   }
   return null;
