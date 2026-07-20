@@ -263,10 +263,91 @@ function stripKnownOptions(args) {
   return cleaned;
 }
 
+function checkPythonDependencies(python) {
+  const requiredPackages = ['ollama', 'chromadb', 'ddgs', 'pypdf', 'tree_sitter', 'rich'];
+  const importCheck = run(
+    python,
+    [
+      "-c",
+      `import importlib.util as u; pkgs=${JSON.stringify(requiredPackages)}; missing=[p for p in pkgs if u.find_spec(p) is None]; print(','.join(missing) if missing else '')`,
+    ],
+    { cwd: packageRoot, stdio: "pipe" },
+  );
+  
+  if (importCheck.status !== 0) {
+    return null; // Error checking dependencies
+  }
+  
+  const missing = (importCheck.stdout || "").trim();
+  if (missing) {
+    return missing.split(',').filter(p => p);
+  }
+  
+  return []; // All dependencies installed
+}
+
+function ensureDependencies(python) {
+  const missing = checkPythonDependencies(python);
+  
+  if (missing === null) {
+    console.error("Error checking Python dependencies. Please run `claw setup` manually.");
+    return false;
+  }
+  
+  if (missing.length === 0) {
+    return true; // All dependencies present
+  }
+  
+  console.log(`Missing Python dependencies: ${missing.join(', ')}`);
+  console.log("Installing missing dependencies automatically...");
+  
+  if (!fs.existsSync(requirementsFile)) {
+    console.error(`Missing requirements file: ${requirementsFile}`);
+    console.error("Please run `claw setup` manually.");
+    return false;
+  }
+  
+  const upgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip"], { cwd: packageRoot });
+  if (upgradePip.status !== 0) {
+    console.error("Failed to upgrade pip. Please run `claw setup` manually.");
+    return false;
+  }
+  
+  const result = run(
+    python,
+    ["-m", "pip", "install", "-r", requirementsFile, "--default-timeout", "120", "--retries", "10"],
+    { cwd: packageRoot },
+  );
+  
+  if (result.status !== 0) {
+    console.error("Failed to install Python dependencies automatically.");
+    console.error("Please run `claw setup` manually to install dependencies.");
+    return false;
+  }
+  
+  console.log("Python dependencies installed successfully.");
+  
+  // Verify installation
+  const stillMissing = checkPythonDependencies(python);
+  if (stillMissing && stillMissing.length > 0) {
+    console.error(`Some dependencies still missing: ${stillMissing.join(', ')}`);
+    console.error("Please run `claw setup` manually.");
+    return false;
+  }
+  
+  return true;
+}
+
 function runAgent(agentArgs) {
   const python = findPython();
   if (!python) {
     console.error("Python was not found. Install Python 3 or set CLAW_PYTHON=/path/to/python.");
+    process.exitCode = 1;
+    return;
+  }
+
+  // Check and ensure dependencies are installed before running the agent
+  if (!ensureDependencies(python)) {
     process.exitCode = 1;
     return;
   }
