@@ -67,6 +67,13 @@ TOOL_LIMITS: dict[str, int] = {
 
     # run tests in docker
     "run_tests":              5,   # Docker container per run
+    "extract_functions":      10,
+    "search_code":            20,
+    "run_terminal":           20,
+    "git_apply_patch":        10,
+    "gnu_patch":              30
+
+
 }
 
 # Pro tier — soft limit per tool (can be exceeded with credits)
@@ -100,9 +107,9 @@ PLANS: dict[str, dict] = {
 }
 # Tools NOT in TOOL_LIMITS run unlimited for everyone (they're purely local)
 # read_files, list_files, edit_file, create_file, delete_file,
-# run_terminal, manage_memory, manage_plan, git_diff, git_status,
-# apply_patch, git_apply_patch, gnu_patch, extract_functions,
-# open_default_browser, search_code, ask_user
+# manage_memory, manage_plan, git_diff, git_status,
+# apply_patch,
+# open_default_browser, ask_user
 
 def month_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")

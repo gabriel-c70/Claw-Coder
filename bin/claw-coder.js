@@ -524,14 +524,32 @@ function startOllamaServe() {
     console.error("Ollama isn't installed - cannot start it. Run `claw setup` first.");
     return false;
   }
+  
+  // Kill any existing ollama serve processes to prevent conflicts
+  console.log("Ensuring clean ollama startup...");
+  if (process.platform === "win32") {
+    run("taskkill", ["/F", "/IM", "ollama.exe"], { stdio: "pipe" });
+  } else {
+    run("pkill", ["-f", "ollama serve"], { stdio: "pipe" });
+  }
+  sleepSync(2000);
+  
   console.log("Initializing 🦙  ollama in the unseen......");
   const proc = spawn("ollama", ["serve"], {
-    detached: true,
-    stdio: "ignore"
-  });
+  detached: true,
+  stdio: ["ignore", "ignore", "ignore"],
+  env: { 
+    ...process.env, 
+    OLLAMA_KEEP_ALIVE: "-1",
+    OLLAMA_NUM_LOAD_RETRY: "10",
+    OLLAMA_LOAD_TIMEOUT: "10m",
+    OLLAMA_REQUEST_TIMEOUT: "10m"
+  },
+});
   proc.unref(); // let it keep running after Node process exits
-  // Poll every 500ms for up to 5s instead of hard-spinning the CPU.
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  
+  // Poll every 500ms for up to 15s instead of 5s
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     sleepSync(500);
     if (isOllamaRunning()) {
       console.log("Ollama is behaving.....");

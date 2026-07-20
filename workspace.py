@@ -54,6 +54,7 @@ import base64
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 payload = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
@@ -63,12 +64,30 @@ if workspace_dir.exists():
 
 import ollama
 
-response = ollama.chat(
-    model=payload["model"],
-    messages=payload["messages"],
-    tools=payload.get("tools"),
-    stream=False,
-)
+# Add retry logic for ollama chat with exponential backoff
+max_retries = 5
+for attempt in range(max_retries):
+    try:
+        response = ollama.chat(
+            model=payload["model"],
+            messages=payload["messages"],
+            tools=payload.get("tools"),
+            stream=False,
+            options={
+                "num_ctx": 4096,
+                "temperature": 0.7,
+                "timeout": 600  # 10 minute timeout
+            }
+        )
+        break
+    except Exception as e:
+        error_str = str(e).lower()
+        if attempt < max_retries - 1 and any(keyword in error_str for keyword in ["terminated", "connection", "refused", "500", "502", "503", "timeout"]):
+            wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6, 8 seconds
+            time.sleep(wait_time)
+            continue
+        # If we've exhausted retries or it's a different error, raise it
+        raise
 
 # Newer ollama-python returns typed objects (ChatResponse, Message, etc.),
 # not plain dicts. Convert before serializing, with a fallback in case the
@@ -244,11 +263,27 @@ class WorkspaceRemoteClient:
             return "Invalid model name. Use names like llama3.2:1b or qwen2.5-coder:7b without spaces."
         if not self.active:
             return "Workspace is not connected. Run /workspace first."
-        result = self._ssh(self.config.ssh_target or "", f"ollama pull {shlex.quote(model)}", timeout=self.config.timeout_seconds)
-        output = (result.stdout + result.stderr).strip()
-        if result.returncode != 0:
+        
+        # Add retry logic for model pulling
+        max_retries = 3
+        for attempt in range(max_retries):
+            result = self._ssh(
+                self.config.ssh_target or "", 
+                f"ollama pull {shlex.quote(model)}", 
+                timeout=self.config.timeout_seconds
+            )
+            output = (result.stdout + result.stderr).strip()
+            
+            if result.returncode == 0:
+                return output or f"{model} installed on {self.config.ssh_target}."
+            
+            # If it failed and we have retries left, wait and try again
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(2)
+                continue
+            
             return output or f"Could not pull {model} on {self.config.ssh_target}."
-        return output or f"{model} installed on {self.config.ssh_target}."
 
     def list_models(self) -> List[Dict[str, Any]]:
         if not self.active:
@@ -359,15 +394,27 @@ class WorkspaceRemoteClient:
         is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=50)
         if is_running.stdout.strip() != "yes":
             status("Starting ollama serve on the remote...")
-            self._ssh(
-                target,
-                "setsid nohup ollama serve > /tmp/ollama.log 2>&1 < /dev/null & disown; sleep 3; printf started",
-                timeout=100,
+            
+            # Kill any existing ollama processes to prevent conflicts
+            self._ssh(target, "pkill -f 'ollama serve' || true", timeout=30)
+            sleep_cmd = "sleep 2"
+            self._ssh(target, sleep_cmd, timeout=30)
+            
+            # Start ollama serve with robust process management
+            start_cmd = (
+                "OLLAMA_KEEP_ALIVE=-1 OLLAMA_NUM_LOAD_RETRY=10 "
+                "nohup ollama serve > /tmp/ollama.log 2>&1 "
+                "</dev/null & echo $! > /tmp/ollama.pid; disown %1 2>/dev/null || true"
             )
+            self._ssh(target, start_cmd, timeout=100)
+            
+            # Wait longer for ollama to fully initialize
+            self._ssh(target, "sleep 5", timeout=30)
+
             # Re-verify instead of assuming success — this is the actual fix.
             recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=60)
             if recheck.stdout.strip() != "yes":
-                log_tail = self._ssh(target, "tail -n 20 /tmp/ollama.log 2>/dev/null", timeout=100)
+                log_tail = self._ssh(target, "tail -n 50 /tmp/ollama.log 2>/dev/null", timeout=100)
                 return (
                     f"deps: {pip_status}; ollama FAILED to start. Log tail:\n"
                     f"{(log_tail.stdout or log_tail.stderr or 'no log available').strip()}"
@@ -469,20 +516,34 @@ class WorkspaceRemoteClient:
         remote_command = (
             f"{shlex.quote(self.config.python)} -c {shlex.quote(script)} {shlex.quote(encoded)}"
         )
-        result = self._ssh(self.config.ssh_target or "", remote_command, timeout=timeout)
+        
+        # Add retry logic for remote execution
+        max_retries = 3
+        for attempt in range(max_retries):
+            result = self._ssh(self.config.ssh_target or "", remote_command, timeout=timeout)
 
-        if result.returncode != 0:
-            error_detail = (result.stderr or result.stdout or "no output").strip()
-            raise RuntimeError(f"Remote execution failed: {error_detail[-1000:]}")
+            if result.returncode != 0:
+                error_detail = (result.stderr or result.stdout or "no output").strip()
+                # If it's a connection error and we have retries left, try again
+                if attempt < max_retries - 1 and any(keyword in error_detail.lower() for keyword in ["connection", "refused", "timeout", "terminated"]):
+                    import time
+                    time.sleep(2)
+                    continue
+                raise RuntimeError(f"Remote execution failed: {error_detail[-1000:]}")
 
-        output = result.stdout.strip()
-        if not output:
-            raise RuntimeError("Remote execution returned no output.")
+            output = result.stdout.strip()
+            if not output:
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(1)
+                    continue
+                raise RuntimeError("Remote execution returned no output.")
+            
+            return output
+        
+        # This should never be reached, but just in case
+        raise RuntimeError("Remote execution failed after maximum retries.")
 
-        # Defensive: take the last non-empty line, in case SSH prints a MOTD
-        # banner or shell profile noise before the script's actual output.
-        lines = [line for line in output.splitlines() if line.strip()]
-        return lines[-1] if lines else output
     def _run_terminal(self, tool_input: Dict[str, Any]) -> str:
         command = str(tool_input.get("command", "")).strip()
         if not command:

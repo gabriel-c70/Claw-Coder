@@ -158,40 +158,75 @@ Return ONLY the title, nothing else."""
 
         return f"{DEFAULT_TAB_PREFIX} · {title}"
 
-
-def pull_model_with_progress(model_name: str):
-    if RICH_AVAILABLE:
-        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn
+def pull_model_with_progress(model_name: str) -> None:
+    if not RICH_AVAILABLE:
         import ollama
-        _console().print(f"[bold green] ❌ {model_name} not installed[/bold green]")
-        _console().print()
+        print(f"{model_name} not installed, pulling...")
+        try:
+            for chunk in ollama.pull(model_name, stream=True):
+                status = chunk.get("status", "")
+                if status:
+                    print(f"  {status}")
+            print(f"✓ {model_name} installed.")
+        except Exception as e:
+            print(f"✗ Failed to pull {model_name}: {e}")
+        return
+
+    from rich.progress import (
+        Progress, SpinnerColumn, TextColumn, BarColumn,
+        DownloadColumn, TransferSpeedColumn, TimeRemainingColumn,
+    )
+    import ollama
+
+    _console().print(f"[bold green] ❌ {model_name} not installed[/bold green]")
+    _console().print()
+
+    try:
         with Progress(
-                SpinnerColumn(spinner_name="runner"),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(),
-                DownloadColumn(),
+            SpinnerColumn(spinner_name="runner"),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
         ) as progress:
             task = progress.add_task(f"Pulling {model_name}", total=None)
+            current_phase: Optional[str] = None
+            last_digest: Optional[str] = None
 
             for chunk in ollama.pull(model_name, stream=True):
                 total = chunk.get("total")
                 completed = chunk.get("completed")
                 status_text = chunk.get("status", "")
+                digest = chunk.get("digest", "")
+
+                # Improved phase detection to prevent duplicate progress bars
+                phase_key = status_text.split()[0] if status_text else ""
+                digest_key = digest[:12] if digest else ""
+                
+                # Only reset when we actually move to a new phase or new digest
+                if phase_key != current_phase or (digest_key and digest_key != last_digest):
+                    current_phase = phase_key
+                    last_digest = digest_key
+                    progress.reset(task, total=total, completed=0)
+
+                label = friendly_status(status_text)
                 if total:
                     progress.update(task, total=total, completed=completed or 0,
-                                    description=f"Internalizing {model_name} — {friendly_status(status_text)}")
+                                    description=f"{model_name} — {label}")
                 else:
-                    progress.update(task, description=f"Loading {model_name} — {friendly_status(status_text)}")
+                    progress.update(task, description=f"{model_name} — {label}")
 
         print(f"✓ {model_name} installed.")
-
-
-    pull_model_with_progress()
+    except Exception as e:
+        _console().print(f"[bold red]✗ Failed to pull {model_name}: {e}[/bold red]")
+        raise
 
 def friendly_status(status_text: str) -> str:
     if not status_text:
         return "Sifting"
     mapping = {
+        "verifying sha256 digest": "Verifying (already downloaded, checking integrity)…",
         "verifying sha256 digest": "Verifying download…",
         "writing manifest": "Finalizing…",
         "removing any unused layers": "Cleaning up…",
@@ -477,7 +512,7 @@ def print_error(message: str) -> None:
         print(f"Error: {message}")
 
 
-def print_goodbye() -> None:
+def print_print_goodbye() -> None:
     set_terminal_title(DEFAULT_TAB_PREFIX)
     if RICH_AVAILABLE:
         _console().print("\n[dim]Goodbye — run `claw chat` anytime.[/dim]\n")

@@ -45,7 +45,9 @@ from tavily import TavilyClient
 import shlex
 from tree_sitter import Parser
 from dotenv import load_dotenv
+import time
 import re
+import signal
 from agent_knowledge import (
     DEFAULT_GRAPH_PATH,
     KnowledgeGraphStore,
@@ -60,7 +62,6 @@ from claw_ui import (
     print_assistant_start,
     print_banner,
     print_error,
-    print_goodbye,
     print_models_table,
     prompt_workspace_target,
     print_status,
@@ -225,6 +226,52 @@ def require_tree_sitter():
     except ImportError as exc:
         raise RuntimeError("Tree-sitter is missing. Install it with: pip install tree-sitter") from exc
     return Language, Parser, Query, QueryCursor
+
+
+def ensure_ollama_running() -> bool:
+    """Check if ollama is running and start it if needed."""
+    try:
+        # Try to list models - this will fail if ollama isn't running
+        ollama.list()
+        return True
+    except Exception:
+        # Ollama not running, try to start it
+        try:
+            import subprocess
+            import platform
+            
+            if platform.system() == "Windows":
+                # Windows: use start command to run in background
+                subprocess.Popen(
+                    ["ollama", "serve"],
+                    creationflags=subprocess.DETACHED_PROCESS,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            else:
+                # Unix-like: use nohup to run in background
+                subprocess.Popen(
+                    ["nohup", "ollama", "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+            
+            # Wait for ollama to start
+            for attempt in range(15):  # 15 attempts, 1 second each
+                time.sleep(1)
+                try:
+                    ollama.list()
+                    logging.info("Ollama started successfully")
+                    return True
+                except Exception:
+                    continue
+            
+            logging.warning("Failed to start ollama after 15 seconds")
+            return False
+        except Exception as e:
+            logging.error(f"Failed to start ollama: {e}")
+            return False
 
 
 def available_languages() -> Dict[str, Dict[str, Any]]:
@@ -713,6 +760,11 @@ class Agent:
             self.messages.append({"role": "system", "content": memory_context})
         self.tools: List[Dict[str, Any]] = []
         self.setup_tools()
+        
+        # Ensure ollama is running in local mode
+        if workspace_mode == "local" and not workspace_ssh:
+            if not ensure_ollama_running():
+                logging.warning("Ollama may not be running properly. Chat functionality may be affected.")
 
     @staticmethod
     def build_system_prompt() -> str:
@@ -2715,8 +2767,7 @@ class Agent:
                     "language": language,
                     "image": spec["image"],
                     "stdout": self.decode_process_output(exc.stdout),
-                    "stderr": f"Docker sandbox timed out "
-                              f"after {timeout} seconds.",
+                    "stderr": f"Docker sandbox timed out after {timeout} seconds.",
                     "returncode": 124,
                     "timeout": timeout,
                 })
@@ -2823,47 +2874,89 @@ class Agent:
                 pull_result = self.remote_workspace.pull_model(self.model)
                 result = f"{result}\nCurrent model: {pull_result}"
         return result
-    def chat(self, user_input: str) -> str:
-        self.messages.append({"role": "user", "content": user_input})
-        tool_events: List[Dict[str, Any]] = []
-        for _ in range(self.max_steps):
-            if self.remote_workspace and self.remote_workspace.active:
-                response = self.remote_workspace.chat(self.model, self.messages, self.tools)
-            else:
-                response = ollama.chat(
+
+    def _ollama_chat_with_retry(self):
+        for attempt in range(5):
+            try:
+                return ollama.chat(
                     model=self.model,
                     messages=self.messages,
                     tools=self.tools,
                     stream=False,
+                    options={
+                        "num_ctx": 4096,
+                        "temperature": 0.7,
+                        "timeout": 600  # 10 minute timeout
+                    }
                 )
-            message = response.get("message", {})
-            assistant_message = {"role": "assistant", "content": message.get("content", "")}
-            tool_calls = message.get("tool_calls") or []
-            if tool_calls:
-                assistant_message["tool_calls"] = tool_calls
-            self.messages.append(assistant_message)
+            except Exception as exc:
+                error_str = str(exc).lower()
+                # Handle various ollama server errors
+                if attempt < 4 and any(keyword in error_str for keyword in ["terminated", "connection", "refused", "500", "502", "503", "timeout"]):
+                    import time
+                    wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6, 8 seconds
+                    logging.warning(f"Ollama connection issue (attempt {attempt + 1}/5): {exc}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                raise
+    def chat(self, user_input: str) -> str:
+        self.messages.append({"role": "user", "content": user_input})
+        tool_events: List[Dict[str, Any]] = []
+        
+        for step in range(self.max_steps):
+            try:
+                if self.remote_workspace and self.remote_workspace.active:
+                    response = self.remote_workspace.chat(self.model, self.messages, self.tools)
+                else:
+                    # Double-check ollama is running before attempting chat
+                    if not ensure_ollama_running():
+                        logging.error("Ollama is not running and could not be started")
+                        return "I'm unable to connect to the Ollama service. Please ensure ollama serve is running."
+                    response = self._ollama_chat_with_retry()
+                    
+                message = response.get("message", {})
+                assistant_message = {"role": "assistant", "content": message.get("content", "")}
+                tool_calls = message.get("tool_calls") or []
+                if tool_calls:
+                    assistant_message["tool_calls"] = tool_calls
+                self.messages.append(assistant_message)
 
-            if not tool_calls:
-                final_message = message.get("content", "")
-                self.add_memory(
-                    "interaction",
-                    f"User: {user_input}\nAgent: {final_message}",
-                    metadata={"tool_events": tool_events},
-                )
-                return final_message
+                if not tool_calls:
+                    final_message = message.get("content", "")
+                    self.add_memory(
+                        "interaction",
+                        f"User: {user_input}\nAgent: {final_message}",
+                        metadata={"tool_events": tool_events},
+                    )
+                    return final_message
 
-            for call in tool_calls:
-                function_data = call.get("function", {})
-                tool_name = function_data.get("name", "")
-                tool_args = self.parse_tool_arguments(function_data.get("arguments", {}))
-                result = self.execute_tool(tool_name, tool_args)
-                try:
-                    result_data = json.loads(result)
-                    tool_status = result_data.get("status", "unknown")
-                except json.JSONDecodeError:
-                    tool_status = "unknown"
-                tool_events.append({"tool": tool_name, "status": tool_status})
-                self.messages.append({"role": "tool", "content": result})
+                for call in tool_calls:
+                    function_data = call.get("function", {})
+                    tool_name = function_data.get("name", "")
+                    tool_args = self.parse_tool_arguments(function_data.get("arguments", {}))
+                    result = self.execute_tool(tool_name, tool_args)
+                    try:
+                        result_data = json.loads(result)
+                        tool_status = result_data.get("status", "unknown")
+                    except json.JSONDecodeError:
+                        tool_status = "unknown"
+                    tool_events.append({"tool": tool_name, "status": tool_status})
+                    self.messages.append({"role": "tool", "content": result})
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                logging.error(f"Error in chat step {step + 1}: {e}")
+                
+                # If it's a connection error and we haven't retried much, try again
+                if step < 2 and any(keyword in error_str for keyword in ["connection", "refused", "terminated", "500", "502", "503"]):
+                    logging.info(f"Retrying chat due to connection error (step {step + 1})")
+                    time.sleep(2)
+                    continue
+                    
+                # If we've exhausted retries or it's a different error, return a helpful message
+                if "terminated" in error_str or "connection" in error_str:
+                    return f"I encountered a connection error with the Ollama service: {e}. Please check if ollama serve is running properly."
+                return f"An error occurred during our conversation: {e}"
 
         final_message = "I reached the tool-execution step limit before finishing."
         self.add_memory(
@@ -3067,7 +3160,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
     except KeyboardInterrupt:
         pass
     finally:
-        print_goodbye()
+        print_print_goodbye()
 
 
 def resolve_model_for_cli(explicit: Optional[str], interactive: bool = True) -> str:
