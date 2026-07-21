@@ -229,21 +229,21 @@ class ClawChatApp(App):
     
     CSS = """
     Screen {
-        background: #0a0a0a;
+        background: #1e1e1e;
     }
     
     #header {
-        background: #111111;
+        background: #252526;
         text-align: center;
         padding: 1;
-        border: solid #222222;
+        border: solid #3e3e42;
     }
     
     #chat-container {
         height: 1fr;
         border: none;
         padding: 2;
-        background: #0a0a0a;
+        background: #1e1e1e;
     }
     
     #input-container {
@@ -251,19 +251,20 @@ class ClawChatApp(App):
         border: none;
         padding: 2;
         dock: bottom;
-        background: #111111;
+        background: #252526;
     }
     
     #input-area {
         height: 3;
-        background: #1a1a1a;
-        border: solid #333333;
+        background: #3c3c3c;
+        border: solid #007acc;
         padding: 1;
-        color: #e0e0e0;
+        color: #cccccc;
     }
     
     #input-area:focus {
-        border: solid #00ff88;
+        border: solid #007acc;
+        background: #3c3c3c;
     }
     
     #sidebar {
@@ -271,47 +272,47 @@ class ClawChatApp(App):
         border: none;
         padding: 2;
         dock: left;
-        background: #111111;
+        background: #252526;
     }
     
     #app-title {
-        color: #00ff88;
+        color: #569cd6;
         text_style: bold;
         margin-bottom: 2;
     }
     
     #model-label, #embed-label {
-        color: #888888;
+        color: #858585;
         margin-bottom: 1;
     }
     
     #commands-title {
-        color: #00ff88;
+        color: #569cd6;
         text_style: bold;
         margin-top: 2;
         margin-bottom: 1;
     }
     
     #cmd-help-1, #cmd-help-2, #cmd-help-3, #cmd-help-4 {
-        color: #666666;
+        color: #9cdcfe;
         margin-bottom: 1;
     }
     
     #footer {
         height: 1;
-        background: #111111;
+        background: #007acc;
         border: none;
         padding: 1 2;
         dock: bottom;
     }
     
     #model-display {
-        color: #00ff88;
+        color: #ffffff;
         text_style: bold;
     }
     
     #exit-hint {
-        color: #ff6b6b;
+        color: #ffffff;
         text_style: italic;
     }
     
@@ -330,59 +331,59 @@ class ClawChatApp(App):
     ChatMessage {
         padding: 2;
         margin: 1;
-        background: #1a1a1a;
+        background: #2d2d2d;
         border: none;
-        border-left: solid #00ff88;
+        border-left: solid #007acc;
     }
     
     Button {
         margin: 1;
-        background: #1a1a1a;
-        border: solid #333333;
-        color: #e0e0e0;
+        background: #3c3c3c;
+        border: solid #007acc;
+        color: #cccccc;
     }
     
     Button:hover {
-        background: #2a2a2a;
-        border: solid #00ff88;
+        background: #505050;
+        border: solid #569cd6;
     }
     
     Button.-primary {
-        background: #00ff88;
-        color: #0a0a0a;
+        background: #007acc;
+        color: #ffffff;
         border: none;
     }
     
     Button.-primary:hover {
-        background: #00cc6a;
+        background: #569cd6;
     }
     
     Button.-error {
-        background: #ff6b6b;
-        color: #0a0a0a;
+        background: #f14c4c;
+        color: #ffffff;
         border: none;
     }
     
     Button.-error:hover {
-        background: #cc5555;
+        background: #d93a3a;
     }
     
     #command-container, #model-container {
         padding: 3;
-        background: #1a1a1a;
-        border: solid #333333;
+        background: #2d2d2d;
+        border: solid #3e3e42;
     }
     
     #command-label, #model-label {
-        color: #00ff88;
+        color: #569cd6;
         text_style: bold;
         margin-bottom: 2;
     }
     
     #command-list, #model-table {
         height: 20;
-        background: #0a0a0a;
-        border: solid #333333;
+        background: #1e1e1e;
+        border: solid #3e3e42;
     }
     
     #command-buttons, #model-buttons {
@@ -391,23 +392,23 @@ class ClawChatApp(App):
     
     #approval-container {
         padding: 3;
-        background: #1a1a1a;
-        border: solid #333333;
+        background: #2d2d2d;
+        border: solid #3e3e42;
     }
     
     #approval-label {
         text_style: bold;
-        color: #00ff88;
+        color: #569cd6;
         margin-bottom: 2;
     }
     
     #approval-details {
-        background: #0a0a0a;
-        border: solid #333333;
+        background: #1e1e1e;
+        border: solid #3e3e42;
         padding: 2;
         margin-bottom: 2;
         height: 12;
-        color: #e0e0e0;
+        color: #cccccc;
     }
     
     #approval-buttons {
@@ -415,7 +416,7 @@ class ClawChatApp(App):
     }
     
     #welcome-message {
-        color: #666666;
+        color: #858585;
         text_style: italic;
     }
     """
@@ -724,7 +725,7 @@ class ClawChatApp(App):
 
 
 def run_textual_chat(agent, document_paths: Optional[List[str]] = None) -> None:
-    """Run the Textual-based chat interface. This is now the only chat UI."""
+    """Run the Textual-based chat interface. This is the default UI."""
     if not TEXTUAL_AVAILABLE:
         print("Textual is not installed. Run: pip install textual>=0.44.0")
         print("Falling back to Rich-based UI...")
@@ -748,7 +749,13 @@ def run_textual_chat(agent, document_paths: Optional[List[str]] = None) -> None:
     
     agent.approval_callback = approval_callback
     
-    app.run()
+    try:
+        app.run()
+    except Exception as e:
+        print(f"Error running Textual UI: {e}")
+        print("Falling back to Rich-based UI...")
+        from agent_rag import run_interactive_chat
+        run_interactive_chat(agent, document_paths=document_paths)
 
 
 if __name__ == "__main__":

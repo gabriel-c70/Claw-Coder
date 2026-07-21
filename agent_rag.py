@@ -3090,6 +3090,19 @@ def ingest_session_documents(agent: Agent, paths: Iterable[str]) -> None:
             print_status(result)
 
 def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = None) -> None:
+    # Try to use Textual UI by default, fall back to Rich-based UI
+    try:
+        from claw_textual_ui import run_textual_chat
+        run_textual_chat(agent, document_paths=document_paths)
+        return
+    except ImportError:
+        # Fall back to Rich-based UI if Textual is not available
+        pass
+    except Exception as e:
+        # If Textual UI fails, fall back to Rich-based UI
+        print(f"Textual UI failed: {e}, falling back to Rich UI...")
+    
+    # Original Rich-based UI implementation
     set_terminal_title("Claw Coder")
     print_banner(agent.model, agent.embedding_model)
 
