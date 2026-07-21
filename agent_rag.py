@@ -871,7 +871,7 @@ class Agent:
                             "items": {"type": "string"},
                             "description": "Optional list of files to read.",
                         },
-                        "max_bytes": {"type": "integer", "default": 120000},
+                        "max_bytes": {"type": "integer", "default": 1200000},
                     },
                 }
             },
@@ -994,7 +994,7 @@ class Agent:
                 "type": "function",
                 "function": {
                     "name": "run_tests",
-                    "description": "Run project tests inside an isolated Docker container",
+                    "description": "Run project tests inside an isolated Docker container for real code",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1061,7 +1061,7 @@ class Agent:
             "type": "function",
             "function": {
                 "name": "ingest_pdf_knowledge",
-                "description": "Ingest a PDF or text document (.pdf, .txt, .md) into document RAG for reasoning",
+                "description": "Ingest a PDF or text document (.pdf, .txt, .md) into document RAG for reasoning only when it is needed if not dont use this tool",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1075,7 +1075,7 @@ class Agent:
             "type": "function",
             "function": {
                 "name": "search_stuff",
-                "description": "Search for the latest most accurate up-to-date information",
+                "description": "Search for the latest most accurate up-to-date information from the internet",
                 "parameters": {
                     "type": "object",
                     "properties": {"query": {"type": "string"}, },
@@ -1087,7 +1087,7 @@ class Agent:
             "type": "function",
             "function": {
                 "name": "open_default_browser",
-                "description": "Open the default browser",
+                "description": "Open the default browser only when the user asks for sth that truely needs the browser and you have a proper link not slop",
                 "parameters": {
                     "type": "object",
                     "properties": {"url": {"type": "string"}, },
@@ -1099,7 +1099,7 @@ class Agent:
             "type": "function",
             "function": {
                 "name": "run_terminal",
-                "description": "Run commands in the local terminal",
+                "description": "Run commands in the local terminal, this tool should be used only on bash based commands or terminal commands not user quieries or random text or normal conversations, this is only needed when you need to execute a command that cannot be done with reasoning alone",
                 "parameters": {
                     "type": "object",
                     "properties": {"command": {"type": "string"},
@@ -1262,7 +1262,7 @@ class Agent:
                 "type": "function",
                 "function": {
                     "name": "ask_user",
-                    "description": "Ask the user a question and wait for approval, clarfication, or additional instructions before continuing.",
+                    "description": "Ask the user a question and wait for approval, clarfication, or additional instructions before continuing a task do this when your going to run a terminal command, edit a file, and make dangerous changes to anything on the users machine.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1464,6 +1464,37 @@ class Agent:
             if limit_error:
                 return json.dumps({"status": "error", "error": limit_error}, ensure_ascii=False)
             # ─
+            
+            # ── approval check for dangerous operations ─────────────────
+            if hasattr(self, 'approval_callback'):
+                approval_required = False
+                approval_details = ""
+                
+                # Commands that need approval - especially dangerous ones
+                dangerous_tools = {
+                    "run_terminal": lambda: f"Command: {tool_input.get('command', 'unknown')}",
+                    "edit_file": lambda: f"Edit file: {tool_input.get('file_path', 'unknown')}",
+                    "delete_file": lambda: f"Delete file: {tool_input.get('file_path', 'unknown')}",
+                    "create_file": lambda: f"Create file: {tool_input.get('file_path', 'unknown')}",
+                    "apply_patch": lambda: f"Apply patch to: {tool_input.get('file_path', 'unknown')}",
+                    "gnu_patch": lambda: f"Apply GNU patch",
+                    "git_apply_patch": lambda: f"Apply git patch",
+                    "execute_code_in_docker": lambda: f"Execute code in Docker",
+                    "ingest_code_knowledge": lambda: f"Ingest code from: {tool_input.get('path', 'unknown')}",
+                    "ingest_pdf_knowledge": lambda: f"Ingest PDF: {tool_input.get('path', 'unknown')}",
+                    "ingest_paths_knowledge": lambda: f"Ingest paths: {tool_input.get('paths', 'unknown')}",
+                }
+                
+                if tool_name in dangerous_tools:
+                    approval_required = True
+                    approval_details = dangerous_tools[tool_name]()
+                
+                if approval_required:
+                    approved = self.approval_callback(tool_name, approval_details)
+                    if not approved:
+                        return json.dumps({"status": "denied", "error": "Operation denied by user"}, ensure_ascii=False)
+            # ─
+            
             if self.remote_workspace and self.remote_workspace.should_delegate(tool_name):
                 return self.remote_workspace.execute_tool(
                     tool_name,

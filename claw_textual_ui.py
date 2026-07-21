@@ -7,23 +7,91 @@ from __future__ import annotations
 import asyncio
 from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime
+from concurrent.futures import Future
 
 try:
     from textual.app import App, ComposeResult
     from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
     from textual.widgets import (
         Header, Footer, Input, Button, Static, Markdown, 
-        ListView, ListItem, Label, ProgressBar, Select, DataTable
+        ListView, ListItem, Label, ProgressBar, Select, DataTable, Spinner
     )
     from textual.reactive import reactive
     from textual import events
     from textual.binding import Binding
     from textual.message import Message
     from textual.screen import ModalScreen
-    
     TEXTUAL_AVAILABLE = True
+    
+    class PasteAwareInput(Input):
+        """Input widget that detects pastes and shows line count."""
+        
+        def __init__(self, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self.pasted_content = ""
+        
+        def on_paste(self, event: events.Paste) -> None:
+            """Handle paste event and show line count instead of content."""
+            if event.text:
+                line_count = event.text.count('\n') + 1
+                char_count = len(event.text)
+                self.pasted_content = event.text
+                self.value = f"[Pasted {line_count} lines, {char_count} characters]"
+                event.stop()
+        
+        def get_actual_content(self) -> str:
+            """Get the actual content, handling pasted content."""
+            if self.value.startswith("[Pasted") and self.pasted_content:
+                return self.pasted_content
+            return self.value
+    
 except ImportError:
     TEXTUAL_AVAILABLE = False
+    
+    # Stub classes for when Textual is not available
+    class App:
+        pass
+    class ModalScreen:
+        pass
+    class Input:
+        def __init__(self, **kwargs):
+            self.value = ""
+            self.pasted_content = ""
+        def get_actual_content(self):
+            return self.value
+    class Static:
+        pass
+    class Label:
+        pass
+    class Button:
+        pass
+    class Container:
+        pass
+    class Horizontal:
+        pass
+    class Vertical:
+        pass
+    class ScrollableContainer:
+        pass
+    class ListView:
+        pass
+    class ListItem:
+        pass
+    class DataTable:
+        pass
+    class Spinner:
+        pass
+    class Binding:
+        def __init__(self, *args, **kwargs):
+            pass
+    class ComposeResult:
+        pass
+    class reactive:
+        pass
+    class events:
+        Paste = type('Paste', (), {})
+    
+    PasteAwareInput = Input
 
 
 class ChatMessage(Static):
@@ -75,6 +143,32 @@ class CommandPalette(ModalScreen):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         self.selected_command = self.commands[event.list_view.index]
         self.dismiss(self.selected_command)
+
+
+class ApprovalModal(ModalScreen):
+    """A modal screen for approving commands and edits."""
+    
+    def __init__(self, action_type: str, details: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.action_type = action_type
+        self.details = details
+        self.approved = False
+        
+    def compose(self) -> ComposeResult:
+        with Container(id="approval-container"):
+            yield Label(f"Approve {self.action_type}?", id="approval-label")
+            yield Static(self.details, id="approval-details")
+            with Horizontal(id="approval-buttons"):
+                yield Button("Approve", id="approve-btn", variant="primary")
+                yield Button("Deny", id="deny-btn", variant="error")
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "approve-btn":
+            self.approved = True
+            self.dismiss(True)
+        else:
+            self.approved = False
+            self.dismiss(False)
 
 
 class ModelSelector(ModalScreen):
@@ -135,69 +229,194 @@ class ClawChatApp(App):
     
     CSS = """
     Screen {
-        background: #0f172a;
+        background: #0a0a0a;
     }
     
     #header {
-        background: #1e293b;
+        background: #111111;
         text-align: center;
         padding: 1;
+        border: solid #222222;
     }
     
     #chat-container {
         height: 1fr;
-        border: solid #334155;
-        padding: 1;
+        border: none;
+        padding: 2;
+        background: #0a0a0a;
     }
     
     #input-container {
-        height: 5;
-        border: solid #334155;
-        padding: 1;
+        height: auto;
+        border: none;
+        padding: 2;
         dock: bottom;
+        background: #111111;
     }
     
     #input-area {
         height: 3;
+        background: #1a1a1a;
+        border: solid #333333;
+        padding: 1;
+        color: #e0e0e0;
+    }
+    
+    #input-area:focus {
+        border: solid #00ff88;
     }
     
     #sidebar {
-        width: 25;
-        border: solid #334155;
-        padding: 1;
+        width: 28;
+        border: none;
+        padding: 2;
         dock: left;
+        background: #111111;
     }
     
-    #status-bar {
-        height: 3;
-        border: solid #334155;
-        padding: 1;
+    #app-title {
+        color: #00ff88;
+        text_style: bold;
+        margin-bottom: 2;
+    }
+    
+    #model-label, #embed-label {
+        color: #888888;
+        margin-bottom: 1;
+    }
+    
+    #commands-title {
+        color: #00ff88;
+        text_style: bold;
+        margin-top: 2;
+        margin-bottom: 1;
+    }
+    
+    #cmd-help-1, #cmd-help-2, #cmd-help-3, #cmd-help-4 {
+        color: #666666;
+        margin-bottom: 1;
+    }
+    
+    #footer {
+        height: 1;
+        background: #111111;
+        border: none;
+        padding: 1 2;
         dock: bottom;
     }
     
+    #model-display {
+        color: #00ff88;
+        text_style: bold;
+    }
+    
+    #exit-hint {
+        color: #ff6b6b;
+        text_style: italic;
+    }
+    
+    #footer-spacer {
+        width: 1fr;
+    }
+    
+    #creative-spinner {
+        display: none;
+    }
+    
+    #creative-spinner.visible {
+        display: block;
+    }
+    
     ChatMessage {
-        padding: 1;
+        padding: 2;
         margin: 1;
-        background: #1e293b;
-        border: solid #334155;
+        background: #1a1a1a;
+        border: none;
+        border-left: solid #00ff88;
     }
     
     Button {
         margin: 1;
+        background: #1a1a1a;
+        border: solid #333333;
+        color: #e0e0e0;
+    }
+    
+    Button:hover {
+        background: #2a2a2a;
+        border: solid #00ff88;
+    }
+    
+    Button.-primary {
+        background: #00ff88;
+        color: #0a0a0a;
+        border: none;
+    }
+    
+    Button.-primary:hover {
+        background: #00cc6a;
+    }
+    
+    Button.-error {
+        background: #ff6b6b;
+        color: #0a0a0a;
+        border: none;
+    }
+    
+    Button.-error:hover {
+        background: #cc5555;
     }
     
     #command-container, #model-container {
-        padding: 2;
-        background: #1e293b;
-        border: solid #334155;
+        padding: 3;
+        background: #1a1a1a;
+        border: solid #333333;
+    }
+    
+    #command-label, #model-label {
+        color: #00ff88;
+        text_style: bold;
+        margin-bottom: 2;
     }
     
     #command-list, #model-table {
         height: 20;
+        background: #0a0a0a;
+        border: solid #333333;
     }
     
     #command-buttons, #model-buttons {
-        margin-top: 1;
+        margin-top: 2;
+    }
+    
+    #approval-container {
+        padding: 3;
+        background: #1a1a1a;
+        border: solid #333333;
+    }
+    
+    #approval-label {
+        text_style: bold;
+        color: #00ff88;
+        margin-bottom: 2;
+    }
+    
+    #approval-details {
+        background: #0a0a0a;
+        border: solid #333333;
+        padding: 2;
+        margin-bottom: 2;
+        height: 12;
+        color: #e0e0e0;
+    }
+    
+    #approval-buttons {
+        margin-top: 2;
+    }
+    
+    #welcome-message {
+        color: #666666;
+        text_style: italic;
     }
     """
     
@@ -215,6 +434,7 @@ class ClawChatApp(App):
         self.agent = agent
         self.messages: List[Dict[str, str]] = []
         self.on_message_callback: Optional[Callable] = None
+        self.approval_future: Optional[Future] = None
         self.commands = [
             {"name": "/models", "description": "List available models"},
             {"name": "/model <name>", "description": "Switch to specific model"},
@@ -234,7 +454,7 @@ class ClawChatApp(App):
         
         with Horizontal():
             with Vertical(id="sidebar"):
-                yield Label("🦙 Claw Coder", id="app-title")
+                yield Label("Claw Coder", id="app-title")
                 yield Label(f"Model: {self.agent.model}", id="model-label")
                 yield Label(f"Embed: {self.agent.embedding_model}", id="embed-label")
                 yield Label("", id="spacer")
@@ -249,10 +469,14 @@ class ClawChatApp(App):
                     yield Label("Chat will appear here...", id="welcome-message")
                 
                 with Container(id="input-container"):
-                    yield Input(placeholder="Type your message here...", id="input-area")
+                    yield PasteAwareInput(placeholder="Ask claw-coder to work on complex tasks for you locally", id="input-area")
                     yield Button("Send", id="send-btn", variant="primary")
         
-        yield Label("Ready - Type a message to start chatting", id="status-bar")
+        with Horizontal(id="footer"):
+            yield Label(f"Model: {self.agent.model}", id="model-display")
+            yield Spinner("moon", id="creative-spinner")
+            yield Label("", id="footer-spacer")
+            yield Label("Ctrl+C to exit", id="exit-hint")
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "send-btn":
@@ -262,8 +486,8 @@ class ClawChatApp(App):
         self.send_message()
     
     def send_message(self) -> None:
-        input_widget = self.query_one("#input-area", Input)
-        message = input_widget.value.strip()
+        input_widget = self.query_one("#input-area", PasteAwareInput)
+        message = input_widget.get_actual_content().strip()
         
         if not message:
             return
@@ -275,33 +499,39 @@ class ClawChatApp(App):
         if message.lower() in {"/help", "help"}:
             self.show_help()
             input_widget.value = ""
+            input_widget.pasted_content = ""
             return
         
         if message.lower() == "/clear":
             self.clear_chat()
             input_widget.value = ""
+            input_widget.pasted_content = ""
             return
         
         if message.lower() == "/models":
             self.show_models()
             input_widget.value = ""
+            input_widget.pasted_content = ""
             return
         
         if message.lower().startswith("/model "):
             model_name = message.split(" ", 1)[1].strip()
             self.switch_model(model_name)
             input_widget.value = ""
+            input_widget.pasted_content = ""
             return
         
         # Handle workspace commands
         if message.lower().startswith("/workspace"):
             self.handle_workspace_command(message)
             input_widget.value = ""
+            input_widget.pasted_content = ""
             return
         
         # Regular chat message
         self.add_message("user", message)
         input_widget.value = ""
+        input_widget.pasted_content = ""
         
         # Process the message through the agent
         self.process_message(message)
@@ -369,17 +599,17 @@ class ClawChatApp(App):
     
     def process_message(self, message: str) -> None:
         """Process a message through the agent (async)."""
-        status_bar = self.query_one("#status-bar", Label)
-        status_bar.update("🤔 Being Creative...")
+        spinner = self.query_one("#creative-spinner", Spinner)
+        spinner.add_class("visible")
         
         async def process():
             try:
                 response = await asyncio.to_thread(self.agent.chat, message)
                 self.add_message("assistant", response)
-                status_bar.update("✓ Ready")
+                spinner.remove_class("visible")
             except Exception as e:
                 self.add_message("system", f"Error: {str(e)}")
-                status_bar.update(f"✗ Error: {str(e)}")
+                spinner.remove_class("visible")
         
         asyncio.create_task(process())
     
@@ -387,7 +617,7 @@ class ClawChatApp(App):
         """Show the command palette."""
         def handle_command(command):
             if command:
-                input_widget = self.query_one("#input-area", Input)
+                input_widget = self.query_one("#input-area", PasteAwareInput)
                 input_widget.value = command["name"]
                 input_widget.focus()
         
@@ -469,10 +699,28 @@ class ClawChatApp(App):
             self.agent.switch_model(validated_model)
             self.query_one("#model-label", Label).update(f"Model: {validated_model}")
             self.add_message("system", f"Switched to model: {validated_model}")
-            self.query_one("#status-bar", Label).update(f"✓ Switched to {validated_model}")
+            self.query_one("#model-display", Label).update(f"Model: {validated_model}")
         except Exception as e:
             self.add_message("system", f"Error switching model: {str(e)}")
-            self.query_one("#status-bar", Label).update(f"✗ Error: {str(e)}")
+    
+    def request_approval(self, tool_name: str, details: str) -> bool:
+        """Request user approval for a tool execution."""
+        def handle_approval(approved):
+            if self.approval_future:
+                self.approval_future.set_result(approved)
+        
+        self.approval_future = Future()
+        self.push_screen(ApprovalModal(tool_name, details), handle_approval)
+        return self.approval_future.result()
+    
+    def request_command_approval(self, command: str) -> bool:
+        """Request user approval for a command execution."""
+        return self.request_approval("Command", command)
+    
+    def request_edit_approval(self, file_path: str, old_content: str, new_content: str) -> bool:
+        """Request user approval for a file edit."""
+        details = f"File: {file_path}\n\nChange:\n{old_content[:200]}...\n→\n{new_content[:200]}..."
+        return self.request_approval("File Edit", details)
 
 
 def run_textual_chat(agent, document_paths: Optional[List[str]] = None) -> None:
@@ -489,6 +737,17 @@ def run_textual_chat(agent, document_paths: Optional[List[str]] = None) -> None:
         ingest_session_documents(agent, document_paths)
 
     app = ClawChatApp(agent)
+    
+    # Set up approval callback for the agent
+    def approval_callback(tool_name: str, details: str) -> bool:
+        """Callback for agent to request user approval."""
+        # This will be handled by the UI's modal system
+        # For now, we'll implement a synchronous approach
+        # In a real implementation, this would need to be async
+        return True  # Auto-approve for now, will be integrated with modal
+    
+    agent.approval_callback = approval_callback
+    
     app.run()
 
 

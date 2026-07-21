@@ -115,11 +115,14 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
         prefix_prompt = f"""Generate a SHORT terminal title (max 3 words) for this user message: "{text}"
 
 Rules:
-- Maximum 3 words
+- Maximum 3 words, preferably 1-2 words
 - First letter of each word capitalized
 - Simple, direct, brief, and really straight to the point
-- If nonsense, return "Chat"
-- Examples: "Code Review", "Bug Fix", "API Setup", "Data Analysis", "Greetings"
+- If nonsense or greeting, return "Chat"
+- Focus on the main action or topic
+- Examples: "Code Review", "Bug Fix", "API Setup", "Data Analysis", "Refactor", "Debug", "New Feature"
+- For greetings: "Chat"
+- For questions: "Help", "Question", "Debug"
 
 Return ONLY the title, nothing else."""
         
