@@ -1,5 +1,7 @@
 ### QClawCode (Q-Claw + Claw-Coder)
 
+[![IMG-3066.webp](https://i.postimg.cc/FHG1py8k/IMG-3066.webp)](https://postimg.cc/rD08Fr8q)
+
 QClawCode is a self-contained, privacy-first AI powerhouse that bridges the gap between a terminal chatbot and a autonomous developer agent. 
 
 Built by merging the voice-enabled terminal persona Q-Claw and the pragmatic, tool-calling RAG specialist Claw-Coder, it can parse code, ingest documents, search the web, and execute shell commands—all via local models.
