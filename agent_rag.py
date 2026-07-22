@@ -3090,18 +3090,7 @@ def ingest_session_documents(agent: Agent, paths: Iterable[str]) -> None:
             print_status(result)
 
 def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = None) -> None:
-    # Try to use Textual UI by default, fall back to Rich-based UI
-    try:
-        from claw_textual_ui import run_textual_chat
-        run_textual_chat(agent, document_paths=document_paths)
-        return
-    except ImportError:
-        # Fall back to Rich-based UI if Textual is not available
-        pass
-    except Exception as e:
-        # If Textual UI fails, fall back to Rich-based UI
-        print(f"Textual UI failed: {e}, falling back to Rich UI...")
-    
+
     # Original Rich-based UI implementation
     set_terminal_title("Claw Coder")
     print_banner(agent.model, agent.embedding_model)
@@ -3120,7 +3109,21 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             if user_input.lower() in {"exit", "quit", "/exit", "/quit"}:
                 break
             if user_input.lower() in {"/help", "help"}:
-                print_status("Commands: /models  /model <name> - switch models  /workspace - connect to remote workspace  /workspace status - show workspace status  /workspace local - switch to local mode  /pdf <file>  /title  exit")
+                help_text = """
+                        Available Commands:
+                        • /models - List available models
+                        • /model <name> - Switch to specific model
+                        • /workspace - Connect to remote workspace
+                        • /workspace status - Show workspace status
+                        • /workspace local - Switch to local mode
+                        • /workspace pull <model> - Pull model on remote
+                        • /pdf <file> - Load PDF document
+                        • /title - Set conversation title
+                        - exit - Quit application
+                        - Crtl + C - To quit
+                    """
+
+                print_status(help_text)
                 continue
             if user_input.lower() == "/models":
                 if agent.remote_workspace and agent.remote_workspace.active:

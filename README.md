@@ -5,7 +5,16 @@
 ### Claw coder is a local first AI agent that turns local coding small LLMs into powerful AI agents that actually work here is how:
 #### Claw coder has access to knowledge graph which means it can ingest files and directories and actually map them and understand what each part does to the other without even needing powerful GPUs and the knowledge graph is lightweight which means it runs completely on you laptop
 
-![claw chat displayed](screenshoot1.png) 
+# Claw-Coder Versions
+> Claw-Coder has gone through a huge amount of versions and upgrades in a very short time
+>
+> - The biggest versions are:
+> 1) Claw-Coder v0.1.0 to v0.2.0 -> These versions are claw-coder were the versions with an old ui as you can see below
+> ![claw chat displayed](screenshoot1.png) 
+> 2) Claw-Coder v0.2.0 to v0.3.4 -> These versions got a new look and some versions in the v0.2.0 family and this new ui was created with rich as you can see below
+> ![claw-new-ui](claw-coder_new_ui.png)
+> 3) Claw-Coder v0.3.0 to v0.4.20 - latest as of 2026/07/22 -> These versions got a new sign in flow and pinging we are trying to get accurate numbers on the people we are actually serving as the creators of Claw-Coder but the npm numbers can be real or not we have introduced pinging since claw-coder is fully local we want to help as many people as we can so pinging allows us to collect feedback from you directly without forcing you to enter forms this pinging will show us the worst commands and the best, the worst ux and the best ui we are actively making claw-coder the best of all time so thank you for understanding we are going to be very transparent about this feature.
+
 > - Claw coder has access to tree-sitter     dss+ RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
 > 
@@ -38,7 +47,7 @@
 |__________|____________|________________________|______________________________________________________________|______________________________________|
 ````
 - ### Caution: Claw-Coder is indeed something else, but it is not perfect it can make mistakes and mess up don't be too open to claw-coder with your environment.
-- ### But this has been thought of at file stage the AI has a directory called workspace where it works from without destroying your file structure.
+- ### But this has been thought of at the file stage, the AI has a directory called workspace where it works from without destroying your file structure.
 
 ---
 
@@ -54,6 +63,7 @@ From this directory:
 ```bash
 npm install -g claw-coder
 claw setup
+claw login  - this signs you up so you can get the full capabilities of claw-coder
 ```
 ---
 For development, use a symlink instead:

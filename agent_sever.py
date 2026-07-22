@@ -11,6 +11,8 @@ import hmac
 import hashlib
 import base64
 from datetime import datetime, timezone, timedelta
+from typing import Optional
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +22,7 @@ from supabase import create_client, Client
 import urllib.request
 import urllib.error
 from dodopayments import DodoPayments
+import requests
 
 load_dotenv()
 
@@ -724,6 +727,121 @@ def get_plan(authorization: str = Header(...)):
         "credits_granted_month": credits_granted_month,
         "usage_percentage": usage_percentage
     }
+def upsert_supabase_user(
+    supabase_url: str,
+    service_key: str,
+    email: str,
+    github_id: str,
+    github_login: str,
+    avatar_url: Optional[str],
+) -> Optional[dict]:
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+    }
+
+    # 1. Check if a Supabase user with this email already exists
+    list_res = requests.get(
+        f"{supabase_url}/auth/v1/admin/users",
+        headers=headers,
+        params={"email": email},
+        timeout=10,
+    )
+
+    if list_res.status_code == 200:
+        existing_users = list_res.json().get("users", [])
+        existing = next((u for u in existing_users if u.get("email") == email), None)
+        if existing:
+            sign_in_res = requests.post(
+                f"{supabase_url}/auth/v1/admin/users/{existing['id']}/session",
+                headers={**headers, "Content-Type": "application/json"},
+                timeout=10,
+            )
+            if sign_in_res.status_code == 200:
+                sign_in_data = sign_in_res.json()
+                return {
+                    "supabase_user_id": existing["id"],
+                    "access_token": sign_in_data.get("access_token"),
+                    "refresh_token": sign_in_data.get("refresh_token"),
+                    "expires_at": sign_in_data.get("expires_at"),
+                }
+            return {"supabase_user_id": existing["id"]}
+
+    # 2. No existing user — create one
+    create_res = requests.post(
+        f"{supabase_url}/auth/v1/admin/users",
+        headers={**headers, "Content-Type": "application/json"},
+        json={
+            "email": email,
+            "email_confirm": True,
+            "user_metadata": {
+                "github_id": github_id,
+                "user_name": github_login,
+                "avatar_url": avatar_url,
+                "provider": "github",
+            },
+            "app_metadata": {
+                "provider": "github",
+                "providers": ["github"],
+            },
+        },
+        timeout=10,
+    )
+
+    if create_res.status_code not in (200, 201):
+        print(f"Warning: could not create Supabase user: {create_res.text}")
+        return None
+
+    new_user = create_res.json()
+
+    session_res = requests.post(
+        f"{supabase_url}/auth/v1/admin/users/{new_user['id']}/session",
+        headers={**headers, "Content-Type": "application/json"},
+        timeout=10,
+    )
+
+    if session_res.status_code == 200:
+        session_data = session_res.json()
+        return {
+            "supabase_user_id": new_user["id"],
+            "access_token": session_data.get("access_token"),
+            "refresh_token": session_data.get("refresh_token"),
+            "expires_at": session_data.get("expires_at"),
+        }
+
+    return {"supabase_user_id": new_user["id"]}
+
+class GithubAuthPayload(BaseModel):
+    github_token: str
+    email: str
+    github_id: str
+    github_login: str
+    avatar_url: str | None = None
+
+
+@app.post("/auth/github-callback")
+def github_callback(payload: GithubAuthPayload):
+    # Verify the token is real by asking GitHub directly — don't trust
+    # whatever identity the client claims without checking.
+    verify = requests.get(
+        "https://api.github.com/user",
+        headers={"Authorization": f"Bearer {payload.github_token}", "Accept": "application/json"},
+        timeout=10,
+    )
+    if verify.status_code != 200 or str(verify.json().get("id")) != payload.github_id:
+        raise HTTPException(status_code=401, detail="Invalid or mismatched GitHub token")
+
+    service_key = os.environ["SUPABASE_SERVICE_KEY"]  # only ever lives here, server-side
+    session = upsert_supabase_user(
+        SUPABASE_URL, service_key, payload.email,
+        payload.github_id, payload.github_login, payload.avatar_url,
+    )
+    if not session:
+        raise HTTPException(status_code=500, detail="Could not create or sign in Supabase user")
+    return session
+
+
+
 
 
 class CheckoutRequest(BaseModel):

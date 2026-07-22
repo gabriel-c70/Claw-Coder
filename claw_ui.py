@@ -193,7 +193,7 @@ def pull_model_with_progress(model_name: str) -> None:
             TransferSpeedColumn(),
             TimeRemainingColumn(),
         ) as progress:
-            task = progress.add_task(f"Pulling {model_name}", total=None)
+            task = progress.add_task(f"Internalizing {model_name}", total=None)
             current_phase: Optional[str] = None
             last_digest: Optional[str] = None
 

@@ -71,101 +71,8 @@ function clearSession() {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
 }
 
-async function upsertSupabaseUser(supabaseUrl, serviceKey, email, githubId, githubLogin, avatarUrl) {
-  if (!serviceKey) return null;
-
-  const listRes = await fetch(
-    `${supabaseUrl}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
-    {
-      headers: {
-        "apikey": serviceKey,
-        "Authorization": `Bearer ${serviceKey}`,
-      },
-    }
-  );
-
-  if (listRes.ok) {
-    const listData = await listRes.json();
-    const existing = listData.users?.find(u => u.email === email);
-    if (existing) {
-      const signInRes = await fetch(
-        `${supabaseUrl}/auth/v1/admin/users/${existing.id}/session`,
-        {
-          method: "POST",
-          headers: {
-            "apikey": serviceKey,
-            "Authorization": `Bearer ${serviceKey}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      if (signInRes.ok) {
-        const signInData = await signInRes.json();
-        return {
-          supabase_user_id: existing.id,
-          access_token: signInData.access_token,
-          refresh_token: signInData.refresh_token,
-          expires_at: signInData.expires_at,
-        };
-      }
-      return { supabase_user_id: existing.id };
-    }
-  }
-
-  const createRes = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
-    method: "POST",
-    headers: {
-      "apikey": serviceKey,
-      "Authorization": `Bearer ${serviceKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      email,
-      email_confirm: true,
-      user_metadata: {
-        github_id: githubId,
-        user_name: githubLogin,
-        avatar_url: avatarUrl,
-        provider: "github",
-      },
-      app_metadata: {
-        provider: "github",
-        providers: ["github"],
-      },
-    }),
-  });
-
-  if (!createRes.ok) {
-    const err = await createRes.text();
-    console.warn(`Warning: could not create Supabase user: ${err}`);
-    return null;
-  }
-
-  const newUser = await createRes.json();
-
-  const sessionRes = await fetch(
-    `${supabaseUrl}/auth/v1/admin/users/${newUser.id}/session`,
-    {
-      method: "POST",
-      headers: {
-        "apikey": serviceKey,
-        "Authorization": `Bearer ${serviceKey}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (sessionRes.ok) {
-    const sessionData = await sessionRes.json();
-    return {
-      supabase_user_id: newUser.id,
-      access_token: sessionData.access_token,
-      refresh_token: sessionData.refresh_token,
-      expires_at: sessionData.expires_at,
-    };
-  }
-
-  return { supabase_user_id: newUser.id };
+function getApiUrl() {
+  return process.env.RATE_LIMIT_API_URL || "https://claw-coder-3.onrender.com";
 }
 
 async function login() {
@@ -256,11 +163,24 @@ async function login() {
       throw new Error("Could not get email from GitHub. Make sure your account has a primary email.");
     }
 
+
+
     console.log("Connecting to Supabase...");
-    const supabaseData = await upsertSupabaseUser(
-      supabaseUrl, serviceKey, primaryEmail,
-      String(githubUser.id), githubUser.login, githubUser.avatar_url,
-    );
+    const authRes = await fetch(`${getApiUrl()}/auth/github-callback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            github_token: tokenData.access_token,
+            email: primaryEmail,
+            github_id: String(githubUser.id),
+            github_login: githubUser.login,
+            avatar_url: githubUser.avatar_url,
+  }),
+});
+  if (!authRes.ok) {
+    throw new Error(`Server auth failed: ${await authRes.text()}`);
+}
+  const supabaseData = await authRes.json();
 
     const accessToken = supabaseData?.access_token || tokenData.access_token;
     const expiresAt = supabaseData?.expires_at

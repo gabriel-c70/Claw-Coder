@@ -221,7 +221,8 @@ function findPython() {
     console.warn(`Note: No Claw-Coder virtual environment found.`);
     console.warn(`  It's recommended to run 'claw setup' to create a proper isolated environment.`);
   }
-  
+
+
   // If no Claw-Coder venv, look for system Python with compatible version
   const systemCandidates = ["python3.12", "python3.11", "python3.10", "python3.9", "python3.8", "python3", "python"];
   for (const candidate of systemCandidates) {
@@ -245,6 +246,43 @@ function findPython() {
     return "python";
   }
   return null;
+}
+
+const crypto = require("node:crypto");
+
+function getDeviceId() {
+  const idFile = path.join(os.homedir(), ".claw-coder", "device_id");
+  try {
+    return fs.readFileSync(idFile, "utf8").trim();
+  } catch {
+    const id = crypto.randomUUID();
+    fs.mkdirSync(path.dirname(idFile), { recursive: true });
+    fs.writeFileSync(idFile, id, "utf8");
+    return id;
+  }
+}
+
+function pingTelemetry(command) {
+  if (process.env.CLAW_TELEMETRY === "0") return;  // opt-out, see note below
+
+  const deviceId = getDeviceId();
+  const pkg = require(path.join(packageRoot, "package.json"));
+
+  fetch("https://nqbrdafvdfntxvhbyama.supabase.co/rest/v1/rpc/record_device_activity", {
+    method: "POST",
+    headers: {
+      "apikey": "sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
+      "Authorization": "Bearer sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      p_device_id: deviceId,
+      p_command: command,
+      p_version: pkg.version,
+      p_platform: process.platform,
+    }),
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => {});  // fire-and-forget — never let this break or slow the CLI
 }
 
 function readOption(args, names, fallback = null) {
@@ -594,6 +632,17 @@ function runSetup() {
   process.exitCode = 0;
 
 }
+function runUpgrade() {
+  console.log("Upgrading claw-coder...");
+  const result = spawnSync("npm", ["install", "-g", "claw-coder@latest"], { stdio: "inherit" });
+  if (result.status === 0) {
+    try { fs.unlinkSync(UPDATE_CHECK_FILE); } catch {}  // force a fresh check next run
+    console.log("\n✓ Upgraded. Run `claw --version` to confirm.");
+  } else {
+    console.error("\nUpgrade failed. Try manually: npm install -g claw-coder@latest");
+    process.exitCode = result.status || 1;
+  }
+}
 
 function runDoctor() {
   const python = findPython();
@@ -664,6 +713,47 @@ async function apiFetch(pathname, session, options = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const UPDATE_CHECK_FILE = path.join(os.homedir(), ".claw-coder", "update_check.json");
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // once a day, not every single run
+
+async function checkForUpdate() {
+  let cache = {};
+  try {
+    cache = JSON.parse(fs.readFileSync(UPDATE_CHECK_FILE, "utf8"));
+  } catch {}
+
+  const now = Date.now();
+  if (cache.checkedAt && now - cache.checkedAt < UPDATE_CHECK_INTERVAL_MS) {
+    return cache.latestVersion || null;   // reuse yesterday's result, don't hit npm every run
+  }
+
+  try {
+    const res = await fetch("https://registry.npmjs.org/claw-coder/latest", {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const latestVersion = data.version;
+
+    fs.mkdirSync(path.dirname(UPDATE_CHECK_FILE), { recursive: true });
+    fs.writeFileSync(UPDATE_CHECK_FILE, JSON.stringify({ checkedAt: now, latestVersion }), "utf8");
+
+    return latestVersion;
+  } catch {
+    return null;   // offline / npm unreachable — fail silently, never block the CLI
+  }
+}
+
+function isNewerVersion(latest, current) {
+  const l = latest.split(".").map(Number);
+  const c = current.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((l[i] || 0) > (c[i] || 0)) return true;
+    if ((l[i] || 0) < (c[i] || 0)) return false;
+  }
+  return false;
 }
 function sleepSync(ms) {
   const platform = process.platform;
@@ -878,7 +968,15 @@ function buildAgentArgs(command, args) {
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
-  const commandArgs = args.slice(1);
+  pingTelemetry(command || "none");
+  const commandArgs = args.slice(1)
+
+  const pkg = require(path.join(packageRoot, "package.json"));
+  const latestVersion = await checkForUpdate();
+  if (latestVersion && isNewerVersion(latestVersion, pkg.version)) {
+    console.log(`\n  A new version of claw-coder is available: ${pkg.version} → ${latestVersion}`);
+    console.log(`  Run \`claw upgrade\` to update.\n`);
+  }
 
   if (!command || command === "--help" || command === "-h" || command === "help") {
     printHelp();
@@ -928,7 +1026,10 @@ async function main() {
         });
     return;
 }
-
+  if (command === "upgrade") {
+  runUpgrade();
+  return;
+}
   if (command === "logout") {
     clearSession();
     console.log("Logged out. Run `claw login` to log in again.");
