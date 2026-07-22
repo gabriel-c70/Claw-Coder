@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-.env
 agent_rag_chroma_db/
 chromadb/
+.env
+.env.*
+stuff.md

@@ -1,11 +1,14 @@
 ### QClawCoder
 (Q-Claw + Claw-Coder)
 
-QClawCode is a self-contained, privacy-first AI powerhouse that bridges the gap between a terminal chatbot and a autonomous developer agent. 
+QClawCoder is a self-contained, privacy-first AI powerhouse that bridges the gap between a terminal chatbot and a autonomous coding agent all while still keeping everything minimal. 
 
 Built by merging the voice-enabled terminal persona Q-Claw and the pragmatic, tool-calling RAG specialist Claw-Coder, it can parse code, ingest documents, search the web, and execute shell commands—all via local models.
-
+### Qwen-Claw
 [![IMG-2978.webp](https://i.postimg.cc/90CktdGg/IMG-2978.webp)](https://postimg.cc/1n7MyN7D)
+## +
+### Claw-Coder
+![claw-coder_image](claw-coder.png)
 
 ## Key Features
 
@@ -23,7 +26,7 @@ Offline Fast-Paths: Knows when not to bother the AI. If you say "hi", it respond
 
 ## Installation & Setup
 
-'''bash
+```bash
 
 1. Prerequisites
 Ensure you have Ollama installed and running on your machine.
@@ -41,13 +44,27 @@ python Qclawcode.py setup
 Run the doctor command to ensure your Node, Python, and Ollama environments are configured correctly:
 
 python Qclawcode.py doctor
+```
 
+```bash
 Usage
 
 Start the interactive chat REPL (default):
 
 python Qclawcode.py
-
-'''
-
+```
+```bash
+Since claw-coder is joing this party that QClaw hosted the way to interact with QClaw-Coder will be through the cli
+Commands like:
+npm install -g QClaw-Coder # this is for installation
+QClawCoder setup
+QClawCoder doctor and then login
+QClaw-Coder chat # this will be for chat but the cli name can be QClaw just that
+```
+```
+File structure
+The first file is Claw-Coder with the source code  which is the AI agent that is joing the party
+The second file is the source code of Q-Claw is the host
+The third file QClaw-Coder_main is the main file where code shall be written by hand for months to create a final product which will show the contributions between the two creators of QClaw-Coder
+```
 [![IMG-3066.webp](https://i.postimg.cc/FHG1py8k/IMG-3066.webp)](https://postimg.cc/rD08Fr8q)
