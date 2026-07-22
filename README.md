@@ -16,7 +16,7 @@ Safe Terminal Execution: If the agent needs to run a command, it will. But if th
 
 Voice & Multimodal: Born from Q-Claw, it possesses a voice. Using Kokoro TTS and Vosk STT, it can lock into a continuous "Voice Mode" where you speak to it, and it speaks back.
  
-⚡Offline Fast-Paths: Knows when not to bother the AI. If you say "hi", it responds instantly. If you ask for a quick web search, it bypasses the LLM entirely and fetches summaries from Wikipedia and DuckDuckGo.
+Offline Fast-Paths: Knows when not to bother the AI. If you say "hi", it responds instantly. If you ask for a quick web search, it bypasses the LLM entirely and fetches summaries from Wikipedia and DuckDuckGo.
 
 ## Installation & Setup
 
@@ -47,7 +47,8 @@ python Qclawcode.py
 
 '''
 
-Supported Code Languages
+### Supported Code Languages
+
 QClawCode uses Tree-sitter to intelligently parse the following languages:
 
 Python (.py)
