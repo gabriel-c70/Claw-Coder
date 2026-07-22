@@ -4,6 +4,7 @@
 const { spawnSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const { login, loadSession, clearSession } = require("./auth");
 const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "qwen3-embedding:4b", "translategemma:4b"]
 
