@@ -1436,6 +1436,12 @@ class Agent:
                 )
                 return None  # allowed
         except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                session_path = Path.home() / ".claw-coder" / "session.json"
+                if session_path.exists():
+                    session_path.unlink()
+                return "Your session is invalid or expired. Exit and run `claw login` again."
+
             if exc.code in {402, 429}:
                 try:
                     detail = _json.loads(exc.read().decode("utf-8")).get("detail", {})
@@ -2210,6 +2216,12 @@ class Agent:
             with _req.urlopen(request, timeout=RATE_LIMIT_TIMEOUT_SECONDS, context=ssl_context) as resp:
                 return resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                session_path = Path.home() / ".claw-coder" / "session.json"
+                if session_path.exists():
+                    session_path.unlink()
+                return "Your session is invalid or expired. Exit and run `claw login` again."
+
             if exc.code == 429:
                 try:
                     detail = json.loads(exc.read().decode("utf-8")).get("detail", {})
@@ -2882,6 +2894,11 @@ class Agent:
             with _req.urlopen(request, timeout=RATE_LIMIT_TIMEOUT_SECONDS, context=ssl_context) as resp:
                 return None  # allowed, credits consumed
         except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                session_path = Path.home() / ".claw-coder" / "session.json"
+                if session_path.exists():
+                    session_path.unlink()
+                return "Your session is invalid or expired. Exit and run `claw login` again."
             try:
                 detail = _json.loads(exc.read().decode("utf-8")).get("detail", {})
                 return detail.get("message", "Workspace access denied.")

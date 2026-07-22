@@ -13,6 +13,7 @@ const pythonAgent = path.join(packageRoot, "agent_rag.py");
 const requirementsFile = path.join(packageRoot, "requirements.txt");
 
 
+
 function loadEnvFile() {
   const envFile = path.join(packageRoot, ".env");
   if (!fs.existsSync(envFile)) return;
@@ -272,8 +273,8 @@ function pingTelemetry(command) {
   fetch("https://nqbrdafvdfntxvhbyama.supabase.co/rest/v1/rpc/record_device_activity", {
     method: "POST",
     headers: {
-      "apikey": "sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
-      "Authorization": "Bearer sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
+      "apikey": "sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
+      "Authorization": "Bearer sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -680,10 +681,6 @@ function runDoctor() {
   }
 }
 
-function getApiUrl() {
-  return (process.env.RATE_LIMIT_API_URL || "https://claw-coder-3.onrender.com").replace(/\/$/, "");
-}
-
 async function apiFetch(pathname, session, options = {}) {
   const timeoutMs = Number(process.env.RATE_LIMIT_TIMEOUT_MS || 45000);
   const controller = new AbortController();
@@ -698,13 +695,15 @@ async function apiFetch(pathname, session, options = {}) {
       },
       signal: controller.signal,
     });
+
+    if (response.status === 401) {
+      clearSession();
+      throw new Error("Your session is invalid or expired. Run `claw login` again.");
+    }
+
     const text = await response.text();
     let data = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      data = { detail: text };
-    }
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
     if (!response.ok) {
       const detail = data.detail || data.error || data;
       const message = typeof detail === "string" ? detail : detail.message || JSON.stringify(detail);
