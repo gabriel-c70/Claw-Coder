@@ -264,28 +264,65 @@ function getDeviceId() {
   }
 }
 
-function pingTelemetry(command) {
-  if (process.env.CLAW_TELEMETRY === "0") return;  // opt-out, see note below
-
-  const deviceId = getDeviceId();
-  const pkg = require(path.join(packageRoot, "package.json"));
-
-  fetch("https://nqbrdafvdfntxvhbyama.supabase.co/rest/v1/rpc/record_device_activity", {
-    method: "POST",
-    headers: {
-      "apikey": "sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
-      "Authorization": "Bearer sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      p_device_id: deviceId,
-      p_command: command,
-      p_version: pkg.version,
-      p_platform: process.platform,
-    }),
-    signal: AbortSignal.timeout(3000),
-  }).catch(() => {});  // fire-and-forget — never let this break or slow the CLI
+function getTelemetryConsentFile() {
+  return path.join(os.homedir(), ".claw-coder", "telemetry_consent.json");
 }
+
+function getTelemetryConsent() {
+  try {
+    const data = JSON.parse(fs.readFileSync(getTelemetryConsentFile(), "utf8"));
+    return data.consent === true;
+  } catch {
+    return null; // never asked yet
+  }
+}
+
+function askTelemetryConsent() {
+  console.log("\nClaw-Coder can send anonymous usage pings — device ID, command run,");
+  console.log("CLI version, platform. No code, no file contents, no personal info.");
+  console.log("This helps us know what people actually use and improve that.\n");
+
+  const readline = require("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question("Enable anonymous usage telemetry? [y/N] ", (answer) => {
+      rl.close();
+      const consent = answer.trim().toLowerCase() === "y";
+      fs.mkdirSync(path.dirname(getTelemetryConsentFile()), { recursive: true });
+      fs.writeFileSync(getTelemetryConsentFile(), JSON.stringify({ consent, decidedAt: Date.now() }), "utf8");
+      resolve(consent);
+    });
+  });
+}
+
+async function pingTelemetry(command) {
+    let consent = getTelemetryConsent();
+    if (consent === null) {
+      consent = await askTelemetryConsent();
+    }
+    if (!consent) return;
+
+    if (process.env.CLAW_TELEMETRY === "0") return;  // opt-out, see note below
+
+    const deviceId = getDeviceId();
+    const pkg = require(path.join(packageRoot, "package.json"));
+
+    fetch("https://nqbrdafvdfntxvhbyama.supabase.co/rest/v1/rpc/record_device_activity", {
+      method: "POST",
+      headers: {
+        "apikey": "sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
+        "Authorization": "Bearer sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_device_id: deviceId,
+        p_command: command,
+        p_version: pkg.version,
+        p_platform: process.platform,
+      }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {
+    });  // fire-and-forget — never let this break or slow the CLI
 
 function readOption(args, names, fallback = null) {
   for (let index = 0; index < args.length; index += 1) {
@@ -299,6 +336,7 @@ function readOption(args, names, fallback = null) {
     }
   }
   return fallback;
+}
 }
 
 function collectDocumentOptions(args) {
@@ -970,7 +1008,7 @@ function buildAgentArgs(command, args) {
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
-  pingTelemetry(command || "none");
+  await pingTelemetry(command || "none");
   const commandArgs = args.slice(1)
 
   const pkg = require(path.join(packageRoot, "package.json"));
@@ -1013,7 +1051,6 @@ async function main() {
   runAgent(["--embedding-model", embeddingModel, "chat"]);
   return;
 }
-  // --- paste this block right after the "doctor" check ---
 
   if (command === "login") {
     const provider = commandArgs[0] || "github";
@@ -1058,6 +1095,18 @@ async function main() {
       process.exitCode = 1;
       return;
     }
+    if (command === "telemetry") {
+  const sub = commandArgs[0];
+  if (sub === "on" || sub === "off") {
+    fs.mkdirSync(path.dirname(getTelemetryConsentFile()), { recursive: true });
+    fs.writeFileSync(getTelemetryConsentFile(), JSON.stringify({ consent: sub === "on", decidedAt: Date.now() }), "utf8");
+    console.log(`Telemetry ${sub === "on" ? "enabled" : "disabled"}.`);
+  } else {
+    const c = getTelemetryConsent();
+    console.log(`Telemetry: ${c === null ? "not yet decided" : c ? "enabled" : "disabled"}`);
+  }
+  return;
+}
 
     apiFetch("/usage", session)
       .then((data) => {
@@ -1309,7 +1358,7 @@ async function main() {
 
 // ── AUTH GATE ──────────────────────────────────────────────
 // skip auth for setup/doctor/help (they don't touch the agent)
-  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models"]);
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models", "telemetry"]);
   if (!NO_AUTH_COMMANDS.has(command)) {
     const session = loadSession();
   if (!session) {
@@ -1326,7 +1375,8 @@ async function main() {
   const KNOWN_COMMANDS = new Set([
     "chat", "models", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
-    "setup", "doctor", "raw", "embedding","usage", "credits", "upgrade-plan", "topup"
+    "setup", "doctor", "raw", "embedding","usage", "credits", "upgrade-plan", "topup",
+    "telemetry"
   ]);
 
   if (!KNOWN_COMMANDS.has(command)) {
