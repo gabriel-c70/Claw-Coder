@@ -296,33 +296,34 @@ function askTelemetryConsent() {
 }
 
 async function pingTelemetry(command) {
-    let consent = getTelemetryConsent();
-    if (consent === null) {
-      consent = await askTelemetryConsent();
-    }
-    if (!consent) return;
+  let consent = getTelemetryConsent();
+  if (consent === null) {
+    consent = await askTelemetryConsent();
+  }
+  if (!consent) return;
 
-    if (process.env.CLAW_TELEMETRY === "0") return;  // opt-out, see note below
+  if (process.env.CLAW_TELEMETRY === "0") return;  // opt-out, see note below
 
-    const deviceId = getDeviceId();
-    const pkg = require(path.join(packageRoot, "package.json"));
+  const deviceId = getDeviceId();
+  const pkg = require(path.join(packageRoot, "package.json"));
 
-    fetch("https://nqbrdafvdfntxvhbyama.supabase.co/rest/v1/rpc/record_device_activity", {
-      method: "POST",
-      headers: {
-        "apikey": "sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
-        "Authorization": "Bearer sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        p_device_id: deviceId,
-        p_command: command,
-        p_version: pkg.version,
-        p_platform: process.platform,
-      }),
-      signal: AbortSignal.timeout(3000),
-    }).catch(() => {
-    });  // fire-and-forget — never let this break or slow the CLI
+  fetch("https://nqbrdafvdfntxvhbyama.supabase.co/rest/v1/rpc/record_device_activity", {
+    method: "POST",
+    headers: {
+      "apikey": "sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
+      "Authorization": "Bearer sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      p_device_id: deviceId,
+      p_command: command,
+      p_version: pkg.version,
+      p_platform: process.platform,
+    }),
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => {
+  });  // fire-and-forget — never let this break or slow the CLI
+}
 
 function readOption(args, names, fallback = null) {
   for (let index = 0; index < args.length; index += 1) {
@@ -336,7 +337,6 @@ function readOption(args, names, fallback = null) {
     }
   }
   return fallback;
-}
 }
 
 function collectDocumentOptions(args) {
