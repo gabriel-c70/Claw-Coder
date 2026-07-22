@@ -17,7 +17,19 @@
 > 4) Upgrade version
 > 5) ```bash
 >     You can now simply run claw upgrade to upgrade to latest claw-coder versions
-
+## Telemetry - Version 0.4.25
+- Claw-Coder includes an optional telemetry feature that collects anonymous usage data by default to help improve the project. 
+## Telemetry collects info like: 
+- Claw-Coder version 
+- OS 
+- Anonymous installation ID 
+- Commands ran, eroor and crash reports(without your source code at all)
+## Telemetry does not collect info:
+- Your source code
+- prompts
+- API keys
+- any info about you or anything between you and claw-coder
+- apart from what was mentioned above in the telemetry collects info like, part, if you dont want to share anonymous usage data, you have to humbly wait for claw-coder@0.4.27 that will include an off switch and on switch we appreciate your patience Thank you so much, Gabriel creator of Claw-Coder
 
 > - Claw coder has access to tree-sitter     dss+ RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
