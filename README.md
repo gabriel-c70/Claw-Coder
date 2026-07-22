@@ -13,7 +13,11 @@
 > ![claw chat displayed](screenshoot1.png) 
 > 2) Claw-Coder v0.2.0 to v0.3.4 -> These versions got a new look and some versions in the v0.2.0 family and this new ui was created with rich as you can see below
 > ![claw-new-ui](claw-coder_new_ui.png)
-> 3) Claw-Coder v0.3.0 to v0.4.23 - latest as of 2026/07/22 -> These versions got a new sign in flow and pinging we are trying to get accurate numbers on the people we are actually serving as the creators of Claw-Coder but the npm numbers can be real or not we have introduced pinging since claw-coder is fully local we want to help as many people as we can so pinging allows us to collect feedback from you directly without forcing you to enter forms this pinging will show us the worst commands and the best, the worst ux and the best ui we are actively making claw-coder the best of all time so thank you for understanding we are going to be very transparent about this feature.
+> 3) Claw-Coder v0.3.0 to v0.4.24 - latest as of 2026/07/22 -> These versions got a new sign in flow and pinging we are trying to get accurate numbers on the people we are actually serving as the creators of Claw-Coder but the npm numbers can be real or not we have introduced pinging since claw-coder is fully local we want to help as many people as we can so pinging allows us to collect feedback from you directly without forcing you to enter forms this pinging will show us the worst commands and the best, the worst ux and the best ui we are actively making claw-coder the best of all time so thank you for understanding we are going to be very transparent about this feature.
+> 4) Upgrade version
+> 5) ```bash
+>     You can now simply run claw upgrade to upgrade to latest claw-coder versions
+
 
 > - Claw coder has access to tree-sitter     dss+ RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
