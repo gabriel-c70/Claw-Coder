@@ -680,7 +680,9 @@ function runDoctor() {
     }
   }
 }
-
+function getApiUrl() {
+  return process.env.RATE_LIMIT_API_URL || "https://claw-coder-3.onrender.com";
+}
 async function apiFetch(pathname, session, options = {}) {
   const timeoutMs = Number(process.env.RATE_LIMIT_TIMEOUT_MS || 45000);
   const controller = new AbortController();
