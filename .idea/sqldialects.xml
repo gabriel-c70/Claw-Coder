@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SqlDialectMappings">
+    <file url="file://$PROJECT_DIR$/Claw-Coder/supabase/migration_add_bucket.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/supabase/schema.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/embeddings_queue/00001-embeddings.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/embeddings_queue/00002-embeddings-queue-config.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/metadb/00001-embedding-metadata.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/metadb/00002-embedding-metadata.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/metadb/00003-full-text-tokenize.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/metadb/00004-metadata-indices.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00001-collections.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00002-segments.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00003-collection-dimension.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00004-tenants-databases.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00005-remove-topic.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00006-collection-segment-metadata.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00007-collection-config.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00008-maintenance-log.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/migrations/sysdb/00009-segment-collection-not-null.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/test/db/migrations/00001-migration-1.psql.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/test/db/migrations/00001-migration-1.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/test/db/migrations/00002-migration-2.psql.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/test/db/migrations/00002-migration-2.sqlite.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/test/db/migrations/00003-migration-3.psql.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/Claw-Coder/venv/lib/python3.12/site-packages/chromadb/test/db/migrations/00003-migration-3.sqlite.sql" dialect="GenericSQL" />
+  </component>
+</project>
