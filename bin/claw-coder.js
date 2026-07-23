@@ -1074,7 +1074,18 @@ async function main() {
     console.log("Logged out. Run `claw login` to log in again.");
     return;
 }
-
+  if (command === "telemetry") {
+  const sub = commandArgs[0];
+  if (sub === "on" || sub === "off") {
+    fs.mkdirSync(path.dirname(getTelemetryConsentFile()), { recursive: true });
+    fs.writeFileSync(getTelemetryConsentFile(), JSON.stringify({ consent: sub === "on", decidedAt: Date.now() }), "utf8");
+    console.log(`Telemetry ${sub === "on" ? "enabled" : "disabled"}.`);
+  } else {
+    const c = getTelemetryConsent();
+    console.log(`Telemetry: ${c === null ? "not yet decided" : c ? "enabled" : "disabled"}`);
+  }
+  return;
+}
   if (command === "whoami") {
     const session = loadSession();
   if (!session) {
@@ -1095,24 +1106,13 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    if (command === "telemetry") {
-  const sub = commandArgs[0];
-  if (sub === "on" || sub === "off") {
-    fs.mkdirSync(path.dirname(getTelemetryConsentFile()), { recursive: true });
-    fs.writeFileSync(getTelemetryConsentFile(), JSON.stringify({ consent: sub === "on", decidedAt: Date.now() }), "utf8");
-    console.log(`Telemetry ${sub === "on" ? "enabled" : "disabled"}.`);
-  } else {
-    const c = getTelemetryConsent();
-    console.log(`Telemetry: ${c === null ? "not yet decided" : c ? "enabled" : "disabled"}`);
-  }
-  return;
-}
+
 
     apiFetch("/usage", session)
       .then((data) => {
         const plan = data.plan || "starter";
-        const planEmoji = plan === "plus" || "pro" || "max" ? "⚡" : "🆓";
-        const planColor = plan === "pro" || "pro" || "max" ? "\x1b[1;36m" : "\x1b[1;33m"; // cyan for pro, yellow for free
+        const planEmoji = ["plus", "pro", "max"].includes(plan) ? "⚡" : "🆓";
+        const planColor = ["plus", "pro", "max"].includes(plan) ? "\x1b[1;36m" : "\x1b[1;33m"; // cyan for pro, yellow for free
         const reset = "\x1b[0m";
 
         const creditsSpent = data.credits_spent_month || 0;
