@@ -30,8 +30,13 @@
 - API keys
 - any info about you or anything between you and claw-coder
 - apart from what was mentioned above in the telemetry collects info like, part, if you dont want to share anonymous usage data, you have to humbly wait for claw-coder@0.4.30 that will include an off switch and on switch we appreciate your patience Thank you so much, Gabriel creator of Claw-Coder
-- note that versions from claw-coder@0.4.26 to 27 have been deleted from this project and claw-coder version 0.5.0 includes an official off button
-
+- note that versions from claw-coder@0.4.26 to 27 have been deleted from this project and claw-coder version 0.5.0 and above includes an official off button
+- Telemetry can be turned off with this command:
+- ```bash
+  claw telemetry status - to see the current status of telemetry
+  claw telemetry on - to turn it on if you want
+  claw telemetry off - to turn it off if you want
+```
 > - Claw coder has access to tree-sitter     dss+ RAG which is put in place just for the coding purpose only but the RAG is designed for both functionalities like for code and documents which means the local model can actually map relationships precisely with the help of knowledge graphs which is a powerful combination
 > 
 > 
