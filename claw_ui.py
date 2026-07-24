@@ -419,7 +419,7 @@ def print_banner(model: str, embedding_model: str) -> None:
     if not RICH_AVAILABLE:
         print(f"Claw Coder — model: {model} | embeddings: {embedding_model}")
         return
-
+    os.system("clear")
     # Show simple welcome box
     show_simple_welcome_box()
     

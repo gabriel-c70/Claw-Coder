@@ -17,3 +17,8 @@
 2026-07-14 22:13:32,074 - Rate limit server unreachable (The read operation timed out)
 2026-07-14 22:14:02,173 - Rate limit: ingest_pdf_knowledge — 1/10 used this month (9 remaining) [free plan, monthly]
 2026-07-14 22:16:06,395 - Rate limit: ingest_pdf_knowledge — 2/10 used this month (8 remaining) [free plan, monthly]
+2026-07-24 15:48:45,527 - Rate limit server unreachable (<urlopen error [Errno 8] nodename nor servname provided, or not known>)
+2026-07-24 16:37:05,093 - Rate limit server unreachable (<urlopen error [Errno 8] nodename nor servname provided, or not known>)
+2026-07-24 17:54:41,842 - Rate limit server unreachable (<urlopen error [Errno 8] nodename nor servname provided, or not known>)
+2026-07-24 18:10:57,121 - Error in chat step 2: [Errno 28] No space left on device
+2026-07-24 18:42:58,957 - Ollama connection issue (attempt 1/5): an error was encountered while running the model: unexpected EOF (status code: 500). Retrying in 2s...
