@@ -3218,7 +3218,16 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 session_title_set = True
 
             print_assistant_start()
-            with ChatSpinner("Being Creative...."):
+
+            REASONING_WORDS = [
+                "Being Creative....", "Reflecting on my past for the present....", "Considering that one idea....", "Analyzing the situation....", "Reasoning....",
+                "Processing....", "Working through this....", "Looking at things creatively....",
+                "Thinking it through....", "Exploring possibilities....", "Evaluating options....",
+                "Connecting ideas....", "Gathering items for this task....", "Reviewing the info....",
+                "Formulating the outcomes....", "Checking details....", "Piecing things together....", "Backing....", "Joggling the tasks literally....", "Cogitating...."
+            ]
+            import random
+            with ChatSpinner(random.choice(REASONING_WORDS)):
                 response = agent.chat(user_input)
             print_assistant_response(response)
     except KeyboardInterrupt:

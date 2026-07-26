@@ -341,7 +341,7 @@ def pick_chat_model_interactive() -> str:
         size_label = _format_bytes(size) if size else "—"
         table.add_row(str(index), entry["name"], size_label)
 
-    _console().print(Panel(table, title="[bold]Local Ollama models[/bold]", border_style="cyan"))
+    _console().print(Panel(table, title="[bold]Local models[/bold]", border_style="cyan"))
     while True:
         choice = Prompt.ask(
             "[bold cyan]Model[/bold cyan]",
@@ -417,7 +417,7 @@ def show_simple_welcome_box():
 
 def print_banner(model: str, embedding_model: str) -> None:
     if not RICH_AVAILABLE:
-        print(f"Claw Coder — model: {model} | embeddings: {embedding_model}")
+        print(f"Claw-Coder — model: {model} | embeddings: {embedding_model}")
         return
     os.system("clear")
     # Show simple welcome box
@@ -461,7 +461,7 @@ def read_user_input() -> str:
 
 def print_assistant_start() -> None:
     if RICH_AVAILABLE:
-        _console().print("[bold cyan]Claw[/bold cyan]")
+        _console().print("[bold cyan]Claw-Coder[/bold cyan]")
     else:
         print("Claw> ", end="", flush=True)
 
