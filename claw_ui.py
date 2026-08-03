@@ -97,7 +97,7 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
                     with urllib.request.urlopen(request, timeout=30, context=ssl_context) as resp:
                         response = json.loads(resp.read().decode("utf-8"))
                         if response.get("status") == "ok":
-                            return response.get("title", f"{DEFAULT_TAB_PREFIX} · {text[:max_len]}")
+                            return response.get( f"{DEFAULT_TAB_PREFIX} · {text[:max_len]}")
                 except urllib.error.HTTPError as exc:
                     # Fall back to local generation if cloud fails
                     pass

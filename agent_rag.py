@@ -768,9 +768,10 @@ class Agent:
 
     @staticmethod
     def build_system_prompt() -> str:
+        from system_prompt import system_prompt_for_claw_coder
         path = Path(__file__).parent / "claw_coder_system_prompt"  # ← removed the double prefix
         if not path.exists():
-            return "You are Claw-Coder, a helpful coding assistant."  # fallback if file missing
+            return system_prompt_for_claw_coder() # fallback if file missing
         return path.read_text(encoding="utf-8")
 
     def load_memory(self) -> List[Dict[str, Any]]:
@@ -3202,7 +3203,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                             for message in reversed(agent.messages)
                             if message.get("role") == "user"
                         ),
-                        "Claw Coder",
+                        "Claw-Coder",
                     )
                 )
                 set_terminal_title(title)
@@ -3220,7 +3221,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             print_assistant_start()
 
             REASONING_WORDS = [
-                "Being Creative....", "Reflecting on my past for the present....", "Considering that one idea....", "Analyzing the situation....", "Reasoning....",
+                "Being Creative....","Triangulating....", "Reflecting on my past for the present....", "Considering that one idea....", "Analyzing the situation....", "Reasoning....",
                 "Processing....", "Working through this....", "Looking at things creatively....",
                 "Thinking it through....", "Exploring possibilities....", "Evaluating options....",
                 "Connecting ideas....", "Gathering items for this task....", "Reviewing the info....",

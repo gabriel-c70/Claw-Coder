@@ -1,6 +1,3 @@
-import subprocess
-import os
-
 def create_file(path, content):
     with open(path, "w", encoding="utf-8") as file:
         file.write(content)
