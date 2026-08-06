@@ -424,7 +424,7 @@ def print_banner(model: str, embedding_model: str) -> None:
     show_simple_welcome_box()
     
     body = Text()
-    body.append("Claw Coder\n", style="bold cyan")
+    body.append("OpenMindedAI's Claw Coder\n", style="bold cyan")
     body.append(f"chat  {model}\n", style="white")
     body.append(f"embed {embedding_model}\n", style="dim")
     body.append("\nCommands: /models /pdf <file> /help /title  exit\n", style="dim italic")
