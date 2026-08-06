@@ -8,4 +8,12 @@ agent_rag_chroma_db/
 chromadb/
 .env
 .env.*
-stuff.md
+agent_rag.log
+agent_main.log
+workspace/
+supabase/
+node_modules/
+agent_knowledge_graph.json
+agent_memory.json
+file.ts
+

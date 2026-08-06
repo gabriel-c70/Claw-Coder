@@ -41,13 +41,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Iterable, Optional, Tuple, Set
 from urllib.parse import urlparse
-from tavily import TavilyClient
 import shlex
 from tree_sitter import Parser
 from dotenv import load_dotenv
 import time
 import re
-import signal
 from agent_knowledge import (
     DEFAULT_GRAPH_PATH,
     KnowledgeGraphStore,
