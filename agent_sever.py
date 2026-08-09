@@ -551,8 +551,39 @@ def generate_terminal_name(body: TerminalNamingRequest, authorization: str = Hea
     
     try:
         import ollama
-        # Use a small model for terminal naming
-        model = "llama3.2:1b"
+        
+        # Get available models and use the smallest one to avoid resource issues
+        available_models = []
+        try:
+            models_response = ollama.list()
+            raw_models = getattr(models_response, "models", None)
+            if raw_models is None and isinstance(models_response, dict):
+                raw_models = models_response.get("models", [])
+            
+            for item in raw_models or []:
+                if isinstance(item, dict):
+                    name = item.get("model") or item.get("name")
+                else:
+                    name = getattr(item, "model", None) or getattr(item, "name", None)
+                if name:
+                    available_models.append(name)
+        except Exception:
+            pass
+        
+        # Prefer small models, fall back to any available model
+        preferred_models = ["llama3.2:1b", "llama3.2:3b", "llama3.2", "qwen2.5:0.5b", "qwen2.5:1b"]
+        model_to_use = None
+        for preferred in preferred_models:
+            if preferred in available_models:
+                model_to_use = preferred
+                break
+        
+        if not model_to_use and available_models:
+            model_to_use = available_models[0]
+        
+        if not model_to_use:
+            # No models available, use simple fallback
+            raise Exception("No ollama models available")
         
         prefix_prompt = f"""Generate a SHORT terminal title (max 3 words) for this user message: "{body.message}"
 
@@ -566,10 +597,18 @@ Rules:
 Return ONLY the title, nothing else."""
         
         response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prefix_prompt}]
+            model=model_to_use,
+            messages=[{"role": "user", "content": prefix_prompt}],
+            options={"timeout": 30}
         )
-        generate_title = response["message"]["content"].strip()
+        
+        # Handle different response formats from ollama
+        if hasattr(response, 'message'):
+            generate_title = response.message.content.strip()
+        elif isinstance(response, dict):
+            generate_title = response.get("message", {}).get("content", "").strip()
+        else:
+            generate_title = str(response).strip()
         
         # Clean up the response - remove any extra text
         generate_title = generate_title.replace('"', '').replace("'", "").strip()
@@ -586,13 +625,22 @@ Return ONLY the title, nothing else."""
         if len(generate_title) > max_len:
             generate_title = generate_title[:max_len].rsplit(" ", 1)[0] + "…"
         
+        # Only return if we got a meaningful title
+        if generate_title and len(generate_title) > 2:
+            return {
+                "status": "ok",
+                "title": f"Claw-Coder · {generate_title}",
+                "credits_remaining": get_credit_balance(user_id, "tools")
+            }
+        else:
+            raise Exception("LLM generated empty or invalid title")
+    except Exception as exc:
+        # Return error so client can fall back to local generation
         return {
-            "status": "ok",
-            "title": f"Claw-Coder · {generate_title}",
+            "status": "error",
+            "message": f"Failed to generate terminal name: {exc}",
             "credits_remaining": get_credit_balance(user_id, "tools")
         }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to generate terminal name: {exc}") from exc
 
 @app.get("/usage")
 def get_usage(authorization: str = Header(...)):

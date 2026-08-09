@@ -400,9 +400,13 @@ class WorkspaceRemoteClient:
             sleep_cmd = "sleep 2"
             self._ssh(target, sleep_cmd, timeout=30)
             
-            # Start ollama serve with robust process management
+            # Start ollama serve with robust process management and resource constraints
             start_cmd = (
-                "OLLAMA_KEEP_ALIVE=-1 OLLAMA_NUM_LOAD_RETRY=10 "
+                "OLLAMA_KEEP_ALIVE=-1 "
+                "OLLAMA_NUM_LOAD_RETRY=10 "
+                "OLLAMA_LOAD_TIMEOUT=10m "
+                "OLLAMA_MAX_QUEUE=512 "
+                "OLLAMA_NUM_PARALLEL=1 "
                 "nohup ollama serve > /tmp/ollama.log 2>&1 "
                 "</dev/null & echo $! > /tmp/ollama.pid; disown %1 2>/dev/null || true"
             )

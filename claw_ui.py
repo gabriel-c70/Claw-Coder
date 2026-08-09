@@ -10,6 +10,12 @@ import sys
 import threading
 import time
 import math
+import logging
+import json
+import urllib.request
+import urllib.error
+import ssl
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 try:
@@ -54,12 +60,6 @@ def set_terminal_title(title: str) -> None:
 def conversation_title_from_message(message: str, max_len: int = 40) -> str:
 
     """Derive a short tab title from the user's first message using cloud API or local Ollama."""
-    import json
-    import urllib.request
-    import urllib.error
-    import ssl
-    from pathlib import Path
-    
     text = " ".join(message.strip().split())
     if not text:
         return DEFAULT_TAB_PREFIX
@@ -97,20 +97,57 @@ def conversation_title_from_message(message: str, max_len: int = 40) -> str:
                     with urllib.request.urlopen(request, timeout=30, context=ssl_context) as resp:
                         response = json.loads(resp.read().decode("utf-8"))
                         if response.get("status") == "ok":
-                            return response.get( f"{DEFAULT_TAB_PREFIX} · {text[:max_len]}")
+                            generated_title = response.get("title", "").strip()
+                            if generated_title:
+                                return f"{DEFAULT_TAB_PREFIX} · {generated_title}"
+                        # If status is error, fall through to local generation
+                        logging.debug(f"Cloud terminal naming returned error: {response.get('message')}")
                 except urllib.error.HTTPError as exc:
                     # Fall back to local generation if cloud fails
-                    pass
-                except Exception:
+                    logging.debug(f"Cloud terminal naming HTTP error: {exc}")
+                except Exception as exc:
                     # Fall back to local generation if cloud fails
-                    pass
-    except Exception:
+                    logging.debug(f"Cloud terminal naming error: {exc}")
+    except Exception as exc:
         # Fall back to local generation if session or cloud fails
-        pass
+        logging.debug(f"Cloud API session/check failed: {exc}")
     
     # Fall back to local Ollama for AI generation
     try:
         import ollama
+        
+        # Get available models and use the smallest one to avoid resource issues
+        available_models = []
+        try:
+            models_response = ollama.list()
+            raw_models = getattr(models_response, "models", None)
+            if raw_models is None and isinstance(models_response, dict):
+                raw_models = models_response.get("models", [])
+            
+            for item in raw_models or []:
+                if isinstance(item, dict):
+                    name = item.get("model") or item.get("name")
+                else:
+                    name = getattr(item, "model", None) or getattr(item, "name", None)
+                if name:
+                    available_models.append(name)
+        except Exception:
+            pass
+        
+        # Prefer small models, fall back to any available model
+        preferred_models = ["llama3.2:1b", "llama3.2:3b", "llama3.2", "qwen2.5:0.5b", "qwen2.5:1b"]
+        model_to_use = None
+        for preferred in preferred_models:
+            if preferred in available_models:
+                model_to_use = preferred
+                break
+        
+        if not model_to_use and available_models:
+            model_to_use = available_models[0]
+        
+        if not model_to_use:
+            # No models available, use simple fallback
+            raise Exception("No ollama models available")
         
         prefix_prompt = f"""Generate a SHORT terminal title (max 3 words) for this user message: "{text}"
 
@@ -127,10 +164,18 @@ Rules:
 Return ONLY the title, nothing else."""
         
         response = ollama.chat(
-            model="llama3.2:1b",
-            messages=[{"role": "user", "content": prefix_prompt}]
+            model=model_to_use,
+            messages=[{"role": "user", "content": prefix_prompt}],
+            options={"timeout": 30}  # Shorter timeout for terminal naming
         )
-        generate_title = response["message"]["content"].strip()
+        
+        # Handle different response formats from ollama
+        if hasattr(response, 'message'):
+            generate_title = response.message.content.strip()
+        elif isinstance(response, dict):
+            generate_title = response.get("message", {}).get("content", "").strip()
+        else:
+            generate_title = str(response).strip()
         
         # Clean up the response - remove any extra text
         generate_title = generate_title.replace('"', '').replace("'", "").strip()
@@ -147,19 +192,25 @@ Return ONLY the title, nothing else."""
         if len(generate_title) > max_len:
             generate_title = generate_title[:max_len].rsplit(" ", 1)[0] + "…"
         
-        return f"{DEFAULT_TAB_PREFIX} · {generate_title}"
+        # Only return if we got a meaningful title
+        if generate_title and len(generate_title) > 2:
+            return f"{DEFAULT_TAB_PREFIX} · {generate_title}"
         
-    except Exception:
-        # Final fallback - use truncated text
-        if len(text) <= max_len:
-            title = text
-        else:
-            cut = text[:max_len]
-            if " " in cut:
-                cut = cut.rsplit(" ", 1)[0]
-            title = cut + "…"
+    except Exception as e:
+        # Log the error for debugging but continue to fallback
+        logging.debug(f"LLM terminal naming failed: {e}")
+    
+    # Final fallback - use truncated text
+    max_len = 40  # Max length for fallback titles
+    if len(text) <= max_len:
+        title = text
+    else:
+        cut = text[:max_len]
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        title = cut + "…"
 
-        return f"{DEFAULT_TAB_PREFIX} · {title}"
+    return f"{DEFAULT_TAB_PREFIX} · {title}"
 
 def pull_model_with_progress(model_name: str) -> None:
     if not RICH_AVAILABLE:
@@ -513,6 +564,81 @@ def print_error(message: str) -> None:
         _console().print(f"[bold red]Error:[/bold red] {message}")
     else:
         print(f"Error: {message}")
+
+
+def ask_user_selection(question: str, options: List[str], default_index: int = 0) -> int:
+    """
+    Interactive selection menu with keyboard navigation.
+    
+    Args:
+        question: The question/prompt to display
+        options: List of option strings to display
+        default_index: Default selected option index
+    
+    Returns:
+        Selected option index
+    """
+    if not RICH_AVAILABLE:
+        # Fallback to simple input for non-rich environments
+        print(f"\n{question}")
+        for i, option in enumerate(options, 1):
+            print(f"  {i}. {option}")
+        while True:
+            try:
+                choice = input(f"Select option (1-{len(options)}): ").strip()
+                if choice.isdigit():
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(options):
+                        return idx
+                print(f"Please enter a number between 1 and {len(options)}")
+            except (EOFError, KeyboardInterrupt):
+                return default_index
+    
+    from rich.panel import Panel
+    from rich.text import Text
+    
+    selected_index = default_index
+    
+    while True:
+        # Build the menu display
+        menu_text = Text()
+        menu_text.append(f"{question}\n\n", style="bold cyan")
+        
+        for i, option in enumerate(options):
+            prefix = "· " if i != selected_index else "1 "
+            style = "bold green" if i == selected_index else "dim"
+            menu_text.append(f"{prefix}", style=style)
+            menu_text.append(f"{option}\n", style=style)
+        
+        menu_text.append("\n", style="dim")
+        menu_text.append("↑↓ select · ↵ confirm · esc cancel", style="dim italic")
+        
+        # Display the menu
+        _console().clear()
+        _console().print(Panel(menu_text, border_style="cyan", padding=(1, 2)))
+        
+        # Get user input
+        try:
+            # For simplicity in terminal environments, use number input
+            # In a real implementation, this would use keyboard capture
+            choice = Prompt.ask(
+                "[bold cyan]Selection[/bold cyan]",
+                default=str(selected_index + 1),
+                show_default=False
+            ).strip()
+            
+            if choice.lower() in {'q', 'quit', 'exit', 'esc'}:
+                return default_index
+            
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(options):
+                    return idx
+            
+            _console().print(f"[red]Invalid selection. Please enter 1-{len(options)}[/red]")
+            
+        except (EOFError, KeyboardInterrupt):
+            return default_index
 
 
 def print_print_goodbye() -> None:

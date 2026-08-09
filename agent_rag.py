@@ -25,7 +25,7 @@ Examples:
 
 from __future__ import annotations
 
-
+import time
 import ollama
 import importlib
 import json
@@ -237,6 +237,16 @@ def ensure_ollama_running() -> bool:
         try:
             import subprocess
             import platform
+            import os
+            
+            # Set environment variables for better stability in resource-constrained environments
+            env = os.environ.copy()
+            env.update({
+                'OLLAMA_KEEP_ALIVE': '-1',  # Keep models loaded indefinitely
+                'OLLAMA_NUM_LOAD_RETRY': '10',  # Retry loading models more times
+                'OLLAMA_LOAD_TIMEOUT': '10m',  # Longer timeout for loading models
+                'OLLAMA_MAX_QUEUE': '512',  # Allow more queued requests
+            })
             
             if platform.system() == "Windows":
                 # Windows: use start command to run in background
@@ -244,7 +254,8 @@ def ensure_ollama_running() -> bool:
                     ["ollama", "serve"],
                     creationflags=subprocess.DETACHED_PROCESS,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
+                    stderr=subprocess.DEVNULL,
+                    env=env
                 )
             else:
                 # Unix-like: use nohup to run in background
@@ -252,11 +263,12 @@ def ensure_ollama_running() -> bool:
                     ["nohup", "ollama", "serve"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    start_new_session=True
+                    start_new_session=True,
+                    env=env
                 )
             
             # Wait for ollama to start
-            for attempt in range(15):  # 15 attempts, 1 second each
+            for attempt in range(30):  # 30 attempts, 1 second each (increased from 15)
                 time.sleep(1)
                 try:
                     ollama.list()
@@ -265,7 +277,7 @@ def ensure_ollama_running() -> bool:
                 except Exception:
                     continue
             
-            logging.warning("Failed to start ollama after 15 seconds")
+            logging.warning("Failed to start ollama after 30 seconds")
             return False
         except Exception as e:
             logging.error(f"Failed to start ollama: {e}")
@@ -1111,13 +1123,13 @@ class Agent:
             "type": "function",
             "function": {
                 "name": "manage_plan",
-                "description": "Monitor, create, update, and clear a concise plan for multi-step plan",
+                "description": "Monitor, create, update, and clear a concise plan for multi-step tasks. Use 'set' with ask_user for plan approval before execution.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["set", "update", "list", "clear"],
+                            "enum": ["set", "update", "list", "clear", "approve"],
                             "default": "list"
                         },
                         "tasks": {
@@ -1261,7 +1273,7 @@ class Agent:
                 "type": "function",
                 "function": {
                     "name": "ask_user",
-                    "description": "Ask the user a question and wait for approval, clarfication, or additional instructions before continuing a task do this when your going to run a terminal command, edit a file, and make dangerous changes to anything on the users machine.",
+                    "description": "Ask the user a question and wait for approval, clarification, or additional instructions before continuing a task. Use this for terminal commands, file edits, and dangerous changes. Supports interactive selection menus.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1273,10 +1285,17 @@ class Agent:
                                 "type": "string",
                                 "description": "Optional file path related to the request."
                             },
-                            "required_response": {
-                                "type":"string",
-                                "enum": ["approval", "text", "yes_no", "selection"],
-                                "default": "text"
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "Optional list of choices for interactive selection menu. If provided, user can select from these options."
+                            },
+                            "default": {
+                                "type": "integer",
+                                "description": "Default option index (0-based) for selection menu.",
+                                "default": 0
                             }
                         },
                         "required": ["question"]
@@ -1579,13 +1598,62 @@ class Agent:
         return parser
     def _ask_user_tool(self, tool_input: Dict[str, Any]) -> str:
         question = tool_input["question"]
+        options = tool_input.get("options", [])
+        default = tool_input.get("default", 0)
         context_file = tool_input.get("context_file")
-        response = {
-            "status": "waiting_for_user",
-            "question": question,
-            "context_file": context_file,
-        }
-        return json.dumps(response, ensure_ascii=False)
+        
+        # If options are provided, use interactive selection
+        if options:
+            try:
+                from claw_ui import ask_user_selection
+                selected_index = ask_user_selection(question, options, default_index=default)
+                response = {
+                    "status": "completed",
+                    "question": question,
+                    "selected_index": selected_index,
+                    "selected_option": options[selected_index] if selected_index < len(options) else None,
+                    "context_file": context_file,
+                }
+                return json.dumps(response, ensure_ascii=False)
+            except Exception as e:
+                # Fallback to simple input if UI fails
+                print(f"\n{question}")
+                for i, option in enumerate(options, 1):
+                    print(f"  {i}. {option}")
+                try:
+                    choice = input(f"Select option (1-{len(options)}): ").strip()
+                    if choice.isdigit():
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(options):
+                            response = {
+                                "status": "completed",
+                                "question": question,
+                                "selected_index": idx,
+                                "selected_option": options[idx],
+                                "context_file": context_file,
+                            }
+                            return json.dumps(response, ensure_ascii=False)
+                except (EOFError, KeyboardInterrupt):
+                    pass
+        
+        # Fallback to simple question without options
+        print(f"\n{question}")
+        try:
+            answer = input("Your answer: ").strip()
+            response = {
+                "status": "completed",
+                "question": question,
+                "answer": answer,
+                "context_file": context_file,
+            }
+            return json.dumps(response, ensure_ascii=False)
+        except (EOFError, KeyboardInterrupt):
+            response = {
+                "status": "cancelled",
+                "question": question,
+                "context_file": context_file,
+            }
+            return json.dumps(response, ensure_ascii=False)
     def _git_status_tool(self, tool_input: Dict[str, Any]) -> str:
         repo_path = Path(tool_input.get("path", ".")).resolve()
         short = tool_input.get("short", True)
@@ -2353,6 +2421,72 @@ class Agent:
 
         if action == "clear":
             self.plan = []
+            return json.dumps({"status": "ok", "plan": self.plan})
+        
+        elif action == "approve":
+            # Interactive plan approval using ask_user selection menu
+            if not self.plan:
+                return json.dumps({"status": "error", "error": "No plan to approve"})
+            
+            # Build approval options
+            approval_options = [
+                "Yes (Approve once)",
+                "Yes, switch to accept edits mode", 
+                "No",
+                "Modify plan"
+            ]
+            
+            try:
+                from claw_ui import ask_user_selection
+                
+                # Display current plan
+                plan_text = "\n".join([f"{i+1}. [{task['status']}] {task['step']}" for i, task in enumerate(self.plan)])
+                question = f"Proposed Plan:\n{plan_text}\n\nDo you approve this plan?"
+                
+                selected_index = ask_user_selection(question, approval_options, default_index=0)
+                
+                if selected_index == 0:  # Yes (Approve once)
+                    return json.dumps({
+                        "status": "approved",
+                        "mode": "once",
+                        "plan": self.plan
+                    })
+                elif selected_index == 1:  # Yes, switch to accept edits mode
+                    return json.dumps({
+                        "status": "approved", 
+                        "mode": "accept_edits",
+                        "plan": self.plan
+                    })
+                elif selected_index == 2:  # No
+                    return json.dumps({
+                        "status": "rejected",
+                        "plan": self.plan
+                    })
+                else:  # Modify plan
+                    return json.dumps({
+                        "status": "modify",
+                        "plan": self.plan
+                    })
+                    
+            except Exception as e:
+                # Fallback to simple approval
+                print(f"\nProposed Plan:")
+                for i, task in enumerate(self.plan, 1):
+                    print(f"  {i}. [{task['status']}] {task['step']}")
+                
+                answer = input("\nApprove this plan? [y/N]: ").strip().lower()
+                if answer in {"y", "yes"}:
+                    return json.dumps({
+                        "status": "approved",
+                        "mode": "once", 
+                        "plan": self.plan
+                    })
+                else:
+                    return json.dumps({
+                        "status": "rejected",
+                        "plan": self.plan
+                    })
+        
         elif action == "set":
             raw_tasks = tool_input.get("tasks") or []
             if not isinstance(raw_tasks, list):
@@ -2375,6 +2509,39 @@ class Agent:
             if in_progress_count > 1:
                 return json.dumps({"status": "error", "error": "Only one task can be in_progress"})
             self.plan = new_plan
+            
+            # Auto-prompt for approval after setting plan
+            try:
+                from claw_ui import ask_user_selection
+                
+                plan_text = "\n".join([f"{i+1}. [{task['status']}] {task['step']}" for i, task in enumerate(self.plan)])
+                question = f"New Plan Created:\n{plan_text}\n\nReady to proceed?"
+                
+                approval_options = ["Yes", "No", "Modify"]
+                selected_index = ask_user_selection(question, approval_options, default_index=0)
+                
+                if selected_index == 0:  # Yes
+                    return json.dumps({
+                        "status": "ok",
+                        "plan": self.plan,
+                        "auto_approved": True
+                    })
+                elif selected_index == 1:  # No
+                    return json.dumps({
+                        "status": "ok",
+                        "plan": self.plan,
+                        "auto_approved": False
+                    })
+                else:  # Modify
+                    return json.dumps({
+                        "status": "ok",
+                        "plan": self.plan,
+                        "auto_approved": False,
+                        "needs_modification": True
+                    })
+            except Exception:
+                # Fallback if UI fails
+                return json.dumps({"status": "ok", "plan": self.plan})
         elif action == "update":
             try:
                 index = int(tool_input.get("index"))
@@ -2399,10 +2566,22 @@ class Agent:
                         if task_index != index and task["status"] == "in_progress":
                             task["status"] = "pending"
                 self.plan[index]["status"] = cleaned_status
-        elif action != "list":
+        elif action == "list":
+            # Format plan nicely for display
+            if not self.plan:
+                return json.dumps({"status": "ok", "plan": [], "message": "No active plan"})
+            
+            formatted_plan = []
+            for i, task in enumerate(self.plan, 1):
+                formatted_plan.append(f"{i}. [{task['status']}] {task['step']}")
+            
+            return json.dumps({
+                "status": "ok", 
+                "plan": self.plan,
+                "formatted": "\n".join(formatted_plan)
+            }, ensure_ascii=False)
+        else:
             return json.dumps({"status": "error", "error": f"Unknown plan action: {action}"})
-
-        return json.dumps({"status": "ok", "plan": self.plan}, ensure_ascii=False)
 
     @staticmethod
     def docker_language_spec(language: str) -> Dict[str, Any]:
@@ -2923,7 +3102,7 @@ class Agent:
         return result
 
     def _ollama_chat_with_retry(self):
-        for attempt in range(5):
+        for attempt in range(7):  # Increased from 5 to 7 attempts
             try:
                 return ollama.chat(
                     model=self.model,
@@ -2939,13 +3118,20 @@ class Agent:
             except Exception as exc:
                 error_str = str(exc).lower()
                 # Handle various ollama server errors
-                if attempt < 4 and any(keyword in error_str for keyword in ["terminated", "connection", "refused", "500", "502", "503", "timeout"]):
-                    import time
-                    wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6, 8 seconds
-                    logging.warning(f"Ollama connection issue (attempt {attempt + 1}/5): {exc}. Retrying in {wait_time}s...")
+                if attempt < 6 and any(keyword in error_str for keyword in ["terminated", "connection", "refused", "500", "502", "503", "timeout", "signal"]):
+                    wait_time = (attempt + 1) * 3  # Increased backoff: 3, 6, 9, 12, 15, 18 seconds
+                    logging.warning(f"Ollama connection issue (attempt {attempt + 1}/7): {exc}. Retrying in {wait_time}s...")
+                    
+                    # Try to restart ollama if it's completely crashed
+                    if "terminated" in error_str or "signal" in error_str:
+                        logging.info("Ollama appears to have crashed, attempting to restart...")
+                        if ensure_ollama_running():
+                            logging.info("Ollama restarted successfully")
+                    
                     time.sleep(wait_time)
                     continue
                 raise
+
     def chat(self, user_input: str) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []

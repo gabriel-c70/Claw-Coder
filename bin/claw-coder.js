@@ -118,7 +118,7 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || process.cwd(),
     stdio: options.stdio || "inherit",
-    env: process.env,
+    env: options.env || process.env,
     encoding: "utf8",
   });
 
@@ -552,7 +552,20 @@ function runAgent(agentArgs) {
     return;
   }
 
-  const result = run(python, [pythonAgent, ...agentArgs], { cwd: process.cwd() });
+  // Set environment variables for better ollama stability in resource-constrained environments
+  const agentEnv = {
+    ...process.env,
+    OLLAMA_KEEP_ALIVE: "-1",
+    OLLAMA_NUM_LOAD_RETRY: "10",
+    OLLAMA_LOAD_TIMEOUT: "10m",
+    OLLAMA_MAX_QUEUE: "512",
+    OLLAMA_NUM_PARALLEL: "1"
+  };
+
+  const result = run(python, [pythonAgent, ...agentArgs], { 
+    cwd: process.cwd(),
+    env: agentEnv
+  });
   process.exitCode = result.status;
 }
 
@@ -885,7 +898,9 @@ function startOllamaServe() {
     OLLAMA_KEEP_ALIVE: "-1",
     OLLAMA_NUM_LOAD_RETRY: "10",
     OLLAMA_LOAD_TIMEOUT: "10m",
-    OLLAMA_REQUEST_TIMEOUT: "10m"
+    OLLAMA_REQUEST_TIMEOUT: "10m",
+    OLLAMA_MAX_QUEUE: "512",
+    OLLAMA_NUM_PARALLEL: "1"
   },
 });
   proc.unref(); // let it keep running after Node process exits
