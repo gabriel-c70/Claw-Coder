@@ -15,5 +15,3 @@ supabase/
 node_modules/
 agent_knowledge_graph.json
 agent_memory.json
-file.ts
-

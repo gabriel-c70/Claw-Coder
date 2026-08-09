@@ -1362,13 +1362,27 @@ async function main() {
   if (!NO_AUTH_COMMANDS.has(command)) {
     const session = loadSession();
   if (!session) {
-    console.error("\nNot logged in. Run: claw login\n");
+    console.error("\n┌─────────────────────────────────────────┐");
+    console.error("│         Authentication Required         │");
+    console.error("├─────────────────────────────────────────┤");
+    console.error("│  You need to log in to use this command │");
+    console.error("│                                         │");
+    console.error("│  Run: claw login                        │");
+    console.error("│                                         │");
+    console.error("│  This will enable:                     │");
+    console.error("│  • Full Claw-Coder capabilities         │");
+    console.error("│  • Cloud tools access                   │");
+    console.error("│  • Usage tracking & credits             │");
+    console.error("└─────────────────────────────────────────┘\n");
     process.exitCode = 1;
     return;
   }
   // inject user identity into env so python can read it if needed
   process.env.CLAW_USER_EMAIL = session.user?.email || "";
   process.env.CLAW_USER_ID    = session.user?.id    || "";
+  
+  // Display user info for confirmation
+  console.log(`\n✓ Logged in as: ${session.user?.email}`);
 }
 // ──────────────────────────────────────────────────────────
   // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
