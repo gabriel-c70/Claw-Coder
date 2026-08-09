@@ -32,9 +32,16 @@
     "agent_knowledge.py",
     "claw_ui.py",
     "workspace.py",
+    "system_prompt.py",
+    "claw_coder_system_prompt",
     "supabase",
     "requirements.txt",
     "README.md",
+    "screenshoot1.png",
+    "screenshoot2.png",
+    "claw-coder_new_ui.png",
+    "logo3.png",
+    "screenshot3.png",
     "LICENSE"
   ]
 }

@@ -85,12 +85,12 @@ async function login() {
     );
   }
 
-  console.log("\n┌─────────────────────────────────────────┐");
-  console.log("│         Claw-Coder Login                │");
-  console.log("├─────────────────────────────────────────┤");
-  console.log("│  Authenticating via GitHub OAuth...     │");
-  console.log("│  This works for ANY GitHub account     │");
-  console.log("└─────────────────────────────────────────┘\n");
+  console.log("\n┌────────────────────────────────────────--─┐");
+  console.log("  │         Claw-Coder Login                  │");
+  console.log("  ├─────────────────────────────────────────--┤");
+  console.log("  │  Authenticating via GitHub OAuth...       │");
+  console.log("  │  This works for ANY GitHub account        │");
+  console.log("  └─────────────────────────────────────────--┘\n");
 
   const deviceRes = await fetch("https://github.com/login/device/code", {
     method: "POST",
@@ -119,9 +119,9 @@ async function login() {
   console.log("├─────────────────────────────────────────┤");
   console.log(`│  ${device.verification_uri.substring(0, 38).padEnd(38)}│`);
   console.log("├─────────────────────────────────────────┤");
-  console.log("│  Step 2: Enter this code               │");
+  console.log("│  Step 2: Enter this code                │");
   console.log("├─────────────────────────────────────────┤");
-  console.log(`│  ${device.user_code.padEnd(38)}│`);
+  console.log(`│  ${device.user_code.padEnd(38)}         │`);
   console.log("└─────────────────────────────────────────┘\n");
 
   const cmd = process.platform === "darwin" ? "open"
@@ -226,15 +226,15 @@ async function login() {
     };
 
     saveSession(session);
-    console.log("\n┌─────────────────────────────────────────┐");
-    console.log("│         Login Successful!               │");
-    console.log("├─────────────────────────────────────────┤");
-    console.log(`│  User: ${primaryEmail.substring(0, 30).padEnd(32)}│`);
-    console.log(`│  GitHub: @${githubUser.login.padEnd(32)}│`);
-    console.log("├─────────────────────────────────────────┤");
-    console.log("│  Session valid for 30 days              │");
-    console.log("│  You can now use all Claw-Coder features│");
-    console.log("└─────────────────────────────────────────┘\n");
+    console.log("\n┌────────────────────────────────────────--─┐");
+    console.log("  │         Login Successful!                 │");
+    console.log("  ├─────────────────────────────────────────--┤");
+    console.log(`  │  User: ${primaryEmail.substring(0, 30).padEnd(32)}│`);
+    console.log(`  │  GitHub: @${githubUser.login.padEnd(32)}  │`);
+    console.log("  ├─────────────────────────────────────────--┤");
+    console.log("  │  Session valid for 30 days                │");
+    console.log("  │  You can now use all Claw-Coder features  │");
+    console.log("  └─────────────────────────────────────────--┘\n");
     return session;
   }
 

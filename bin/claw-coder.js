@@ -1363,17 +1363,17 @@ async function main() {
     const session = loadSession();
   if (!session) {
     console.error("\n┌─────────────────────────────────────────┐");
-    console.error("│         Authentication Required         │");
-    console.error("├─────────────────────────────────────────┤");
-    console.error("│  You need to log in to use this command │");
-    console.error("│                                         │");
-    console.error("│  Run: claw login                        │");
-    console.error("│                                         │");
-    console.error("│  This will enable:                     │");
-    console.error("│  • Full Claw-Coder capabilities         │");
-    console.error("│  • Cloud tools access                   │");
-    console.error("│  • Usage tracking & credits             │");
-    console.error("└─────────────────────────────────────────┘\n");
+    console.error("│         Authentication Required           │");
+    console.error("├─────────────────────────────────────────--┤");
+    console.error("│  You need to log in to use this command   │");
+    console.error("│                                           │");
+    console.error("│  Run: claw login                          │");
+    console.error("│                                           │");
+    console.error("│  This will enable:                        │");
+    console.error("│  • Full Claw-Coder capabilities           │");
+    console.error("│  • Cloud tools access                     │");
+    console.error("│  • Usage tracking & credits               │");
+    console.error("└─────────────────────────────────────────--┘\n");
     process.exitCode = 1;
     return;
   }
