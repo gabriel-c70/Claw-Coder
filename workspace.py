@@ -65,7 +65,7 @@ if workspace_dir.exists():
 import ollama
 
 # Add retry logic for ollama chat with exponential backoff
-max_retries = 5
+max_retries = 2
 for attempt in range(max_retries):
     try:
         response = ollama.chat(
@@ -76,14 +76,14 @@ for attempt in range(max_retries):
             options={
                 "num_ctx": 4096,
                 "temperature": 0.7,
-                "timeout": 600  # 10 minute timeout
+                "timeout": 180  # 3 minute timeout
             }
         )
         break
     except Exception as e:
         error_str = str(e).lower()
         if attempt < max_retries - 1 and any(keyword in error_str for keyword in ["terminated", "connection", "refused", "500", "502", "503", "timeout"]):
-            wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6, 8 seconds
+            wait_time = (attempt + 1) * 3  # Exponential backoff: 3, 6 seconds
             time.sleep(wait_time)
             continue
         # If we've exhausted retries or it's a different error, raise it
@@ -106,7 +106,8 @@ class WorkspaceConfig:
     remote_dir: str = DEFAULT_REMOTE_DIR
     remote_agent_dir: str = REMOTE_AGENT_DIR
     python: str = "python3"
-    timeout_seconds: int = 14400
+    timeout_seconds: int = 180  # 3 minutes for most operations
+    runpod_http_url: Optional[str] = None  # RunPod HTTP API endpoint
 
 
 class WorkspaceRemoteClient:
@@ -138,7 +139,8 @@ class WorkspaceRemoteClient:
 
     @property
     def active(self) -> bool:
-        return self.config.mode == "ssh" and bool(self.config.ssh_target)
+        return (self.config.mode == "ssh" and bool(self.config.ssh_target)) or \
+               (self.config.mode == "http" and bool(self.config.runpod_http_url))
 
     def should_delegate(self, tool_name: str) -> bool:
         return self.active and tool_name in self.REMOTE_TOOLS
@@ -146,8 +148,14 @@ class WorkspaceRemoteClient:
     def status(self) -> str:
         if not self.active:
             return "Workspace mode: local. Run /workspace and paste your Codespace SSH link to move work remote."
+        if self.config.mode == "http":
+            return (
+                "Workspace mode: RunPod HTTP API\n"
+                f"Endpoint: {self.config.runpod_http_url}\n"
+                "Chat and model inference running via HTTP API."
+            )
         return (
-            "Workspace mode: Claw-Coder's new machine\n"
+            "Workspace mode: SSH remote\n"
             f"Host: {self.config.ssh_target}\n"
             f"Workspace: {self.config.remote_dir}\n"
             "Chat, model pulls, and coding tools are running remotely."
@@ -157,6 +165,10 @@ class WorkspaceRemoteClient:
         def status(msg: str) -> None:
             if on_status:
                 on_status(msg)
+
+        # Check if it's a RunPod HTTP URL
+        if "runpod" in pasted.lower() and ("http" in pasted.lower() or ":11434" in pasted):
+            return self.setup_runpod_http(pasted, on_status)
 
         target = parse_codespace_target(pasted)
         if not target:
@@ -169,6 +181,7 @@ class WorkspaceRemoteClient:
                 "  - IP address: 192.168.1.1 or user@192.168.1.1\n"
                 "  - GitHub Codespaces: https://github.com/codespaces/...\n"
                 "  - SSH config alias: your-alias-from-ssh-config\n"
+                "  - RunPod HTTP URL: https://xxx-11434.proxy.runpod.net\n"
 
             )
 
@@ -263,31 +276,58 @@ class WorkspaceRemoteClient:
             return "Invalid model name. Use names like llama3.2:1b or qwen2.5-coder:7b without spaces."
         if not self.active:
             return "Workspace is not connected. Run /workspace first."
-        
-        # Add retry logic for model pulling
+
+        # Use HTTP API for RunPod
+        if self.config.mode == "http" and self.config.runpod_http_url:
+            try:
+                import requests
+                response = requests.post(f"{self.config.runpod_http_url}/api/pull", json={"name": model}, timeout=300)
+                if response.status_code == 200:
+                    return f"{model} pulled successfully on RunPod."
+                else:
+                    return f"Failed to pull {model}: HTTP {response.status_code}"
+            except Exception as e:
+                return f"Failed to pull {model}: {str(e)}"
+
+        # SSH method for other providers
         max_retries = 3
         for attempt in range(max_retries):
             result = self._ssh(
-                self.config.ssh_target or "", 
-                f"ollama pull {shlex.quote(model)}", 
+                self.config.ssh_target or "",
+                f"ollama pull {shlex.quote(model)}",
                 timeout=self.config.timeout_seconds
             )
             output = (result.stdout + result.stderr).strip()
-            
+
             if result.returncode == 0:
                 return output or f"{model} installed on {self.config.ssh_target}."
-            
+
             # If it failed and we have retries left, wait and try again
             if attempt < max_retries - 1:
                 import time
                 time.sleep(2)
                 continue
-            
+
             return output or f"Could not pull {model} on {self.config.ssh_target}."
 
     def list_models(self) -> List[Dict[str, Any]]:
         if not self.active:
             return []
+
+        # Use HTTP API for RunPod
+        if self.config.mode == "http" and self.config.runpod_http_url:
+            try:
+                import requests
+                response = requests.get(f"{self.config.runpod_http_url}/api/tags", timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    models = data.get("models", [])
+                    return [{"name": m.get("name"), "size": m.get("size")} for m in models]
+            except Exception:
+                pass
+            return []
+
+        # SSH method for other providers
         script = "import json, ollama; print(json.dumps(ollama.list(), default=lambda o: getattr(o, '__dict__', str(o))))"
         result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=100)
         if result.returncode != 0 or not result.stdout.strip():
@@ -312,6 +352,11 @@ class WorkspaceRemoteClient:
     def chat(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not self.active:
             raise RuntimeError("Workspace is not connected")
+
+        # Use HTTP API for RunPod, SSH for other providers
+        if self.config.mode == "http" and self.config.runpod_http_url:
+            return self._chat_http(model, messages, tools)
+
         model = normalize_model_name(model)
         payload = {
             "model": model,
@@ -426,6 +471,73 @@ class WorkspaceRemoteClient:
 
         return f"deps: {pip_status}; ollama: installed and running"
 
+    def setup_runpod_http(self, url: str, on_status: Optional[Any] = None) -> str:
+        """Setup RunPod HTTP API connection without SSH."""
+        def status(msg: str) -> None:
+            if on_status:
+                on_status(msg)
+
+        # Clean up the URL
+        url = url.strip()
+        if not url.startswith("http"):
+            url = f"https://{url}"
+
+        status(f"Testing RunPod connection to {url}...")
+        try:
+            import requests
+            # Test connection by listing models
+            response = requests.get(f"{url}/api/tags", timeout=30)
+            if response.status_code != 200:
+                return f"Failed to connect to RunPod: HTTP {response.status_code}"
+
+            self.config.mode = "http"
+            self.config.runpod_http_url = url
+            self.config.remote_dir = "/root"  # Default for RunPod
+
+            models = response.json().get("models", [])
+            model_list = ", ".join([m.get("name", "unknown") for m in models[:5]])
+
+            return (
+                f"✅ Connected to RunPod HTTP API\n"
+                f"Endpoint: {url}\n"
+                f"Available models: {model_list}\n"
+                "Workspace mode is now active."
+            )
+        except Exception as e:
+            return f"Failed to connect to RunPod: {str(e)}"
+
+    def _chat_http(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Use HTTP API for chat (RunPod) - much more reliable than SSH."""
+        try:
+            import requests
+
+            # Convert messages to ollama format
+            ollama_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
+
+            payload = {
+                "model": model,
+                "messages": ollama_messages,
+                "stream": False,
+                "options": {
+                    "num_ctx": 4096,
+                    "temperature": 0.7,
+                }
+            }
+
+            response = requests.post(
+                f"{self.config.runpod_http_url}/api/chat",
+                json=payload,
+                timeout=180
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP API error: {response.status_code}")
+
+            return response.json()
+
+        except Exception as e:
+            raise RuntimeError(f"HTTP chat failed: {str(e)}")
+
     def discover_workspace_dir(self, target: str) -> Optional[str]:
         """
         Tries several conventions in order, since not every remote follows
@@ -442,6 +554,7 @@ class WorkspaceRemoteClient:
             "/mycodeenvironment",
             "/app",  # common in containerized applications
             "/project",  # another common project directory
+            "/runpod",  # RunPod specific
         ]
 
         for root in candidate_roots:
@@ -592,7 +705,9 @@ class WorkspaceRemoteClient:
             [
                 "ssh",
                 "-o", "BatchMode=yes",  # fail immediately instead of prompting for a password
-                "-o", "ConnectTimeout=40",  # don't hang on an unreachable/asleep host either
+                "-o", "ConnectTimeout=60",  # increased from 40 to 60 for slower connections
+                "-o", "ServerAliveInterval=30",  # keep connection alive
+                "-o", "ServerAliveCountMax=3",  # allow some missed keepalives
                 target,
                 command,
             ],

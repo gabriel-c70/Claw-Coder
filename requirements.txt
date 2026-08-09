@@ -9,6 +9,7 @@ tree-sitter-typescript
 tree-sitter-json
 tree-sitter-javascript
 tree-sitter-html
+requests
 
 chromadb==0.5.23; python_version < "3.13"
 ddgs
