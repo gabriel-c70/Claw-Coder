@@ -1380,9 +1380,6 @@ async function main() {
   // inject user identity into env so python can read it if needed
   process.env.CLAW_USER_EMAIL = session.user?.email || "";
   process.env.CLAW_USER_ID    = session.user?.id    || "";
-  
-  // Display user info for confirmation
-  console.log(`\n✓ Logged in as: ${session.user?.email}`);
 }
 // ──────────────────────────────────────────────────────────
   // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
