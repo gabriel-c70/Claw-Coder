@@ -54,6 +54,7 @@ from agent_knowledge import (
 )
 from claw_ui import (
     ChatSpinner,
+    ToolStatusDisplay,
     conversation_title_from_message,
     list_ollama_models,
     print_assistant_response,
@@ -85,7 +86,7 @@ RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "90"))
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(message)s",
-    handlers=[logging.FileHandler("agent_rag.log"), logging.StreamHandler(sys.stdout)],
+    handlers=[logging.FileHandler("agent_rag.log")],
 )
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -3132,7 +3133,7 @@ class Agent:
                     continue
                 raise
 
-    def chat(self, user_input: str) -> str:
+    def chat(self, user_input: str, tool_status_display: Optional[ToolStatusDisplay] = None) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []
         
@@ -3167,12 +3168,25 @@ class Agent:
                     function_data = call.get("function", {})
                     tool_name = function_data.get("name", "")
                     tool_args = self.parse_tool_arguments(function_data.get("arguments", {}))
+                    
+                    # Show tool status
+                    if tool_status_display:
+                        tool_status_display.start_tool(tool_name)
+                    
                     result = self.execute_tool(tool_name, tool_args)
+                    
                     try:
                         result_data = json.loads(result)
                         tool_status = result_data.get("status", "unknown")
+                        success = tool_status == "ok"
                     except json.JSONDecodeError:
                         tool_status = "unknown"
+                        success = False
+                    
+                    # Complete tool status
+                    if tool_status_display:
+                        tool_status_display.complete_tool(success, result[:200] if len(result) > 200 else result)
+                    
                     tool_events.append({"tool": tool_name, "status": tool_status})
                     self.messages.append({"role": "tool", "content": result})
                     
@@ -3412,8 +3426,11 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 "Formulating the outcomes....", "Checking details....", "Piecing things together....", "Backing....", "Joggling the tasks literally....", "Cogitating...."
             ]
             import random
+            
+            # Use tool status display for better UX
+            tool_display = ToolStatusDisplay()
             with ChatSpinner(random.choice(REASONING_WORDS)):
-                response = agent.chat(user_input)
+                response = agent.chat(user_input, tool_status_display=tool_display)
             print_assistant_response(response)
     except KeyboardInterrupt:
         pass

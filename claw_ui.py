@@ -672,3 +672,63 @@ class ChatSpinner:
         self.label = label
         if self._status is not None:
             self._status.update(f"[cyan]{label}[/cyan]")
+
+
+class ToolStatusDisplay:
+    """Display real-time tool execution status like Devin."""
+    
+    def __init__(self) -> None:
+        self._current_tool: Optional[str] = None
+        self._status: Optional[Status] = None
+        self._console = _console() if RICH_AVAILABLE else None
+        
+    def start_tool(self, tool_name: str, description: str = "") -> None:
+        """Start displaying status for a tool execution."""
+        self._current_tool = tool_name
+        if self._console and RICH_AVAILABLE:
+            label = f"[bold blue]Running:[/bold blue] {tool_name}"
+            if description:
+                label += f" — {description}"
+            self._status = self._console.status(label, spinner="dots")
+            self._status.__enter__()
+        elif not RICH_AVAILABLE:
+            print(f"Running: {tool_name}")
+            
+    def update_tool(self, description: str) -> None:
+        """Update the current tool status description."""
+        if self._status and self._console:
+            label = f"[bold blue]Running:[/bold blue] {self._current_tool}"
+            if description:
+                label += f" — {description}"
+            self._status.update(label)
+        elif not RICH_AVAILABLE:
+            print(f"  {description}")
+            
+    def complete_tool(self, success: bool = True, result: str = "") -> None:
+        """Mark the current tool as complete."""
+        if self._status:
+            self._status.__exit__(None, None, None)
+            self._status = None
+        
+        if self._console and RICH_AVAILABLE:
+            if success:
+                self._console.print(f"[green]✓[/green] {self._current_tool}")
+            else:
+                self._console.print(f"[red]✗[/red] {self._current_tool}")
+            if result:
+                self._console.print(f"[dim]{result}[/dim]")
+        elif not RICH_AVAILABLE:
+            status = "✓" if success else "✗"
+            print(f"{status} {self._current_tool}")
+            if result:
+                print(f"  {result}")
+        
+        self._current_tool = None
+        
+    def __enter__(self) -> "ToolStatusDisplay":
+        return self
+        
+    def __exit__(self, *args: object) -> None:
+        if self._status:
+            self._status.__exit__(*args)
+            self._status = None
