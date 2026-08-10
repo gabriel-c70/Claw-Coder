@@ -66,6 +66,8 @@ from claw_ui import (
     print_status,
     print_user_prompt,
     read_user_input,
+    read_multiline_input,
+    open_editor_for_input,
     resolve_chat_model,
     set_terminal_title,
     validate_ollama_model,
@@ -3102,20 +3104,55 @@ class Agent:
                 result = f"{result}\nCurrent model: {pull_result}"
         return result
 
-    def _ollama_chat_with_retry(self):
+    def _ollama_chat_with_retry(self, stream_callback=None):
         for attempt in range(7):  # Increased from 5 to 7 attempts
             try:
-                return ollama.chat(
-                    model=self.model,
-                    messages=self.messages,
-                    tools=self.tools,
-                    stream=False,
-                    options={
-                        "num_ctx": 4096,
-                        "temperature": 0.7,
-                        "timeout": 600  # 10 minute timeout
-                    }
-                )
+                # Use streaming if callback is provided, otherwise use non-streaming
+                if stream_callback:
+                    full_response = {"message": {"content": "", "tool_calls": None}}
+                    for chunk in ollama.chat(
+                        model=self.model,
+                        messages=self.messages,
+                        tools=self.tools,
+                        stream=True,
+                        options={
+                            "num_ctx": 4096,
+                            "temperature": 0.7,
+                            "timeout": 600  # 10 minute timeout
+                        }
+                    ):
+                        if hasattr(chunk, 'message'):
+                            if hasattr(chunk.message, 'content'):
+                                content = chunk.message.content
+                                full_response["message"]["content"] += content
+                                # Stream the content to the callback
+                                if content:
+                                    stream_callback(content)
+                            if hasattr(chunk.message, 'tool_calls') and chunk.message.tool_calls:
+                                full_response["message"]["tool_calls"] = chunk.message.tool_calls
+                        elif isinstance(chunk, dict):
+                            if chunk.get("message", {}).get("content"):
+                                content = chunk["message"]["content"]
+                                full_response["message"]["content"] += content
+                                # Stream the content to the callback
+                                if content:
+                                    stream_callback(content)
+                            if chunk.get("message", {}).get("tool_calls"):
+                                full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
+                    
+                    return full_response
+                else:
+                    return ollama.chat(
+                        model=self.model,
+                        messages=self.messages,
+                        tools=self.tools,
+                        stream=False,
+                        options={
+                            "num_ctx": 4096,
+                            "temperature": 0.7,
+                            "timeout": 600  # 10 minute timeout
+                        }
+                    )
             except Exception as exc:
                 error_str = str(exc).lower()
                 # Handle various ollama server errors
@@ -3133,20 +3170,20 @@ class Agent:
                     continue
                 raise
 
-    def chat(self, user_input: str, tool_status_display: Optional[ToolStatusDisplay] = None) -> str:
+    def chat(self, user_input: str, tool_status_display: Optional[ToolStatusDisplay] = None, stream_callback=None) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []
         
         for step in range(self.max_steps):
             try:
                 if self.remote_workspace and self.remote_workspace.active:
-                    response = self.remote_workspace.chat(self.model, self.messages, self.tools)
+                    response = self.remote_workspace.chat(self.model, self.messages, self.tools, stream=stream_callback is not None, stream_callback=stream_callback)
                 else:
                     # Double-check ollama is running before attempting chat
                     if not ensure_ollama_running():
                         logging.error("Ollama is not running and could not be started")
                         return "I'm unable to connect to the Ollama service. Please ensure ollama serve is running."
-                    response = self._ollama_chat_with_retry()
+                    response = self._ollama_chat_with_retry(stream_callback=stream_callback)
                     
                 message = response.get("message", {})
                 assistant_message = {"role": "assistant", "content": message.get("content", "")}
@@ -3318,10 +3355,12 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
     session_title_set = False
     try:
         while True:
-            print_user_prompt()
-            user_input = read_user_input()
+            # Use multi-line input for better editing experience
+            user_input = read_multiline_input()
             if not user_input:
                 continue
+            
+            # Handle special commands
             if user_input.lower() in {"exit", "quit", "/exit", "/quit"}:
                 break
             if user_input.lower() in {"/help", "help"}:
@@ -3335,23 +3374,22 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                         • /workspace pull <model> - Pull model on remote
                         • /pdf <file> - Load PDF document
                         • /title - Set conversation title
-                        - exit - Quit application
-                        - Crtl + C - To quit
+                        • exit or quit - Quit application
+                        • Ctrl+D - Accept multi-line input
+                        • Ctrl+C - Cancel input
                     """
 
                 print_status(help_text)
                 continue
+            
             if user_input.lower() == "/models":
                 if agent.remote_workspace and agent.remote_workspace.active:
                     print_models_table(agent.remote_workspace.list_models())
                 else:
                     print_models_table(list_ollama_models())
                 continue
-            if user_input.lower().startswith("/model "):
-                print_status(agent.switch_model(user_input.split(" ", 1)[1].strip()))
-                continue
-
-
+            
+            # Handle workspace and model commands
             if user_input.lower().startswith("/workspace"):
                 access_error = agent._check_workspace_credits("/workspace")
                 if access_error:
@@ -3393,6 +3431,11 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                         result = agent.setup_workspace_from_paste(target)
                     print_status(result)
                 continue
+            
+            if user_input.lower().startswith("/model "):
+                print_status(agent.switch_model(user_input.split(" ", 1)[1].strip()))
+                continue
+            
             if user_input.lower() == "/title":
                 title = conversation_title_from_message(
                     next(
@@ -3407,6 +3450,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 set_terminal_title(title)
                 print_status(title)
                 continue
+            
             if user_input.lower().startswith("/pdf ") or user_input.lower().startswith("/document "):
                 doc_path = user_input.split(" ", 1)[1].strip()
                 ingest_session_documents(agent, [doc_path])
@@ -3416,6 +3460,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 set_terminal_title(conversation_title_from_message(user_input))
                 session_title_set = True
 
+            # Show assistant response header
             print_assistant_start()
 
             REASONING_WORDS = [
@@ -3429,9 +3474,27 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             
             # Use tool status display for better UX
             tool_display = ToolStatusDisplay()
+            
+            # Streaming callback function
+            full_streamed_content = []
+            def stream_callback(content):
+                # Stream content as it arrives for better UX
+                full_streamed_content.append(content)
+                if RICH_AVAILABLE:
+                    _console().print(content, end="")
+                else:
+                    print(content, end="", flush=True)
+            
             with ChatSpinner(random.choice(REASONING_WORDS)):
-                response = agent.chat(user_input, tool_status_display=tool_display)
-            print_assistant_response(response)
+                response = agent.chat(user_input, tool_status_display=tool_display, stream_callback=stream_callback)
+            
+            # If streaming happened, add newline and continue
+            if full_streamed_content:
+                if RICH_AVAILABLE:
+                    _console().print()  # Add newline after streaming
+            # If streaming didn't happen (fallback), print the full response
+            elif response:
+                print_assistant_response(response)
     except KeyboardInterrupt:
         pass
     finally:

@@ -22,3 +22,4 @@ tavily-python
 certifi
 rich>=13.7
 dodopayments
+prompt_toolkit>=3.0.0

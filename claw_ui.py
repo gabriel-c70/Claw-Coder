@@ -510,6 +510,121 @@ def read_user_input() -> str:
     return input("").strip()
 
 
+def read_multiline_input() -> str:
+    """Read multi-line input with visual editing using prompt_toolkit."""
+    try:
+        from prompt_toolkit import prompt
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.keys import Keys
+        from prompt_toolkit.formatted_text import HTML
+        
+        # Custom key bindings
+        kb = KeyBindings()
+        
+        @kb.add(Keys.ControlD)
+        def _(event):
+            """Accept input on Ctrl+D."""
+            event.app.exit(result=event.app.current_buffer.text)
+        
+        @kb.add(Keys.ControlC)
+        def _(event):
+            """Cancel input on Ctrl+C."""
+            event.app.exit(result="")
+        
+        # Use prompt with placeholder - prompt_toolkit handles placeholder text automatically
+        result = prompt(
+            HTML('<style fg="cyan">❭ </style>'),
+            multiline=True,
+            key_bindings=kb,
+            enable_suspend=True,
+            placeholder='work with claw-coder on a complex project',
+        )
+        
+        return result.strip()
+        
+    except ImportError:
+        # Fallback to simple multi-line input if prompt_toolkit not available
+        print("work with claw-coder on a complex project ❭ (Enter empty line to finish)")
+        lines = []
+        while True:
+            try:
+                line = input()
+                if line == "":
+                    break
+                lines.append(line)
+            except EOFError:
+                break
+            except KeyboardInterrupt:
+                return ""
+        return "\n".join(lines).strip()
+
+
+def open_editor_for_input(initial_text: str = "") -> str:
+    """Open the system's default editor for multi-line input editing."""
+    import tempfile
+    import subprocess
+    import os
+    import platform
+    
+    # Create a temporary file with the initial text
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as temp_file:
+        temp_file.write(initial_text)
+        temp_file_path = temp_file.name
+    
+    try:
+        # Determine the editor to use
+        editor = os.environ.get('EDITOR')
+        if not editor:
+            # Fallback to common editors based on platform
+            if platform.system() == 'Windows':
+                editor = 'notepad'
+            else:
+                # Try common editors in order of preference
+                for potential_editor in ['vim', 'nano', 'vi', 'code', 'emacs']:
+                    try:
+                        subprocess.run(['which', potential_editor], check=True, capture_output=True)
+                        editor = potential_editor
+                        break
+                    except subprocess.CalledProcessError:
+                        continue
+                
+                # If no editor found, default to vi
+                if not editor:
+                    editor = 'vi'
+        
+        # Clear the screen for better editor experience
+        if platform.system() != 'Windows':
+            os.system('clear')
+        
+        # Open the editor
+        if platform.system() == 'Windows':
+            subprocess.call([editor, temp_file_path])
+        else:
+            # For Unix-like systems, use the terminal
+            subprocess.call([editor, temp_file_path])
+        
+        # Read the edited content
+        with open(temp_file_path, 'r') as file:
+            edited_text = file.read()
+        
+        return edited_text.strip()
+    
+    except Exception as e:
+        # If editor fails, fall back to regular input
+        if RICH_AVAILABLE:
+            _console().print(f"[red]Editor failed: {e}. Falling back to regular input.[/red]")
+        else:
+            print(f"Editor failed: {e}. Falling back to regular input.")
+        return read_user_input()
+    
+    finally:
+        # Clean up the temporary file
+        try:
+            os.unlink(temp_file_path)
+        except OSError:
+            pass
+
+
 def print_assistant_start() -> None:
     if RICH_AVAILABLE:
         _console().print("[bold cyan]Claw-Coder[/bold cyan]")

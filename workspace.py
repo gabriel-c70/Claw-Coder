@@ -66,19 +66,59 @@ import ollama
 
 # Add retry logic for ollama chat with exponential backoff
 max_retries = 2
+use_streaming = payload.get("stream", False)
+
 for attempt in range(max_retries):
     try:
-        response = ollama.chat(
-            model=payload["model"],
-            messages=payload["messages"],
-            tools=payload.get("tools"),
-            stream=False,
-            options={
-                "num_ctx": 4096,
-                "temperature": 0.7,
-                "timeout": 180  # 3 minute timeout
-            }
-        )
+        if use_streaming:
+            # Streaming mode - output chunks as they arrive
+            full_response = {"message": {"content": "", "tool_calls": None}}
+            for chunk in ollama.chat(
+                model=payload["model"],
+                messages=payload["messages"],
+                tools=payload.get("tools"),
+                stream=True,
+                options={
+                    "num_ctx": 4096,
+                    "temperature": 0.7,
+                    "timeout": 180  # 3 minute timeout
+                }
+            ):
+                if hasattr(chunk, 'message'):
+                    if hasattr(chunk.message, 'content'):
+                        content = chunk.message.content
+                        full_response["message"]["content"] += content
+                        # Stream the content as JSON chunks
+                        if content:
+                            print(json.dumps({"chunk": content}, ensure_ascii=False), flush=True)
+                    if hasattr(chunk.message, 'tool_calls') and chunk.message.tool_calls:
+                        full_response["message"]["tool_calls"] = chunk.message.tool_calls
+                elif isinstance(chunk, dict):
+                    if chunk.get("message", {}).get("content"):
+                        content = chunk["message"]["content"]
+                        full_response["message"]["content"] += content
+                        # Stream the content as JSON chunks
+                        if content:
+                            print(json.dumps({"chunk": content}, ensure_ascii=False), flush=True)
+                    if chunk.get("message", {}).get("tool_calls"):
+                        full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
+            
+            # Send final response
+            print(json.dumps({"final": full_response}, ensure_ascii=False), flush=True)
+            response = full_response
+        else:
+            # Non-streaming mode (original behavior)
+            response = ollama.chat(
+                model=payload["model"],
+                messages=payload["messages"],
+                tools=payload.get("tools"),
+                stream=False,
+                options={
+                    "num_ctx": 4096,
+                    "temperature": 0.7,
+                    "timeout": 180  # 3 minute timeout
+                }
+            )
         break
     except Exception as e:
         error_str = str(e).lower()
@@ -95,7 +135,9 @@ for attempt in range(max_retries):
 if hasattr(response, "model_dump"):
     response = response.model_dump()
 
-print(json.dumps(response, ensure_ascii=False, default=lambda o: getattr(o, "__dict__", str(o))))
+# Only print the final response if not in streaming mode (streaming mode already printed it)
+if not use_streaming:
+    print(json.dumps(response, ensure_ascii=False, default=lambda o: getattr(o, "__dict__", str(o))))
 """
 
 
@@ -349,13 +391,13 @@ class WorkspaceRemoteClient:
                 models.append({"name": name, "size": size})
         return sorted(models, key=lambda entry: entry["name"])
 
-    def chat(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def chat(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], stream: bool = False, stream_callback=None) -> Dict[str, Any]:
         if not self.active:
             raise RuntimeError("Workspace is not connected")
 
         # Use HTTP API for RunPod, SSH for other providers
         if self.config.mode == "http" and self.config.runpod_http_url:
-            return self._chat_http(model, messages, tools)
+            return self._chat_http(model, messages, tools, stream=stream, stream_callback=stream_callback)
 
         model = normalize_model_name(model)
         payload = {
@@ -363,9 +405,16 @@ class WorkspaceRemoteClient:
             "messages": messages,
             "tools": tools,
             "workspace_dir": self.config.remote_dir,
+            "stream": stream,
         }
-        output = self._remote_python(REMOTE_CHAT_SCRIPT, payload)
-        return json.loads(output)
+        
+        if stream and stream_callback:
+            # For streaming mode, we need to handle the output differently
+            output = self._remote_python_stream(REMOTE_CHAT_SCRIPT, payload, stream_callback)
+            return output
+        else:
+            output = self._remote_python(REMOTE_CHAT_SCRIPT, payload)
+            return json.loads(output)
 
     def execute_tool(self, tool_name: str, tool_input: Dict[str, Any], model: str = "", embedding_model: str = "") -> str:
         if not self.active:
@@ -506,7 +555,7 @@ class WorkspaceRemoteClient:
         except Exception as e:
             return f"Failed to connect to RunPod: {str(e)}"
 
-    def _chat_http(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _chat_http(self, model: str, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], stream: bool = False, stream_callback=None) -> Dict[str, Any]:
         """Use HTTP API for chat (RunPod) - much more reliable than SSH."""
         try:
             import requests
@@ -514,26 +563,68 @@ class WorkspaceRemoteClient:
             # Convert messages to ollama format
             ollama_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
 
-            payload = {
-                "model": model,
-                "messages": ollama_messages,
-                "stream": False,
-                "options": {
-                    "num_ctx": 4096,
-                    "temperature": 0.7,
+            if stream and stream_callback:
+                # Streaming mode
+                payload = {
+                    "model": model,
+                    "messages": ollama_messages,
+                    "stream": True,
+                    "options": {
+                        "num_ctx": 4096,
+                        "temperature": 0.7,
+                    }
                 }
-            }
 
-            response = requests.post(
-                f"{self.config.runpod_http_url}/api/chat",
-                json=payload,
-                timeout=180
-            )
+                full_response = {"message": {"content": "", "tool_calls": None}}
+                
+                response = requests.post(
+                    f"{self.config.runpod_http_url}/api/chat",
+                    json=payload,
+                    stream=True,
+                    timeout=180
+                )
 
-            if response.status_code != 200:
-                raise RuntimeError(f"HTTP API error: {response.status_code}")
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP API error: {response.status_code}")
 
-            return response.json()
+                # Process streaming response
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            chunk_data = json.loads(line)
+                            if chunk_data.get("message", {}).get("content"):
+                                content = chunk_data["message"]["content"]
+                                full_response["message"]["content"] += content
+                                if stream_callback:
+                                    stream_callback(content)
+                            if chunk_data.get("message", {}).get("tool_calls"):
+                                full_response["message"]["tool_calls"] = chunk_data["message"]["tool_calls"]
+                        except json.JSONDecodeError:
+                            pass
+
+                return full_response
+            else:
+                # Non-streaming mode
+                payload = {
+                    "model": model,
+                    "messages": ollama_messages,
+                    "stream": False,
+                    "options": {
+                        "num_ctx": 4096,
+                        "temperature": 0.7,
+                    }
+                }
+
+                response = requests.post(
+                    f"{self.config.runpod_http_url}/api/chat",
+                    json=payload,
+                    timeout=180
+                )
+
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP API error: {response.status_code}")
+
+                return response.json()
 
         except Exception as e:
             raise RuntimeError(f"HTTP chat failed: {str(e)}")
@@ -660,6 +751,66 @@ class WorkspaceRemoteClient:
         
         # This should never be reached, but just in case
         raise RuntimeError("Remote execution failed after maximum retries.")
+
+    def _remote_python_stream(self, script: str, payload: Dict[str, Any], stream_callback, timeout: int = 600) -> Dict[str, Any]:
+        """
+        Runs `script` on the remote machine via `python3 -c` with streaming support.
+        Reads output line by line and calls stream_callback for each chunk.
+        """
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        remote_command = (
+            f"{shlex.quote(self.config.python)} -c {shlex.quote(script)} {shlex.quote(encoded)}"
+        )
+        
+        # Use subprocess directly for streaming
+        import subprocess
+        ssh_cmd = ["ssh", self.config.ssh_target or "", remote_command]
+        
+        full_response = {"message": {"content": "", "tool_calls": None}}
+        
+        try:
+            process = subprocess.Popen(
+                ssh_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1  # Line buffered
+            )
+            
+            # Read output line by line
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                try:
+                    data = json.loads(line)
+                    if "chunk" in data:
+                        # Stream the chunk content
+                        chunk_content = data["chunk"]
+                        full_response["message"]["content"] += chunk_content
+                        if stream_callback:
+                            stream_callback(chunk_content)
+                    elif "final" in data:
+                        # Final response received
+                        final_data = data["final"]
+                        if isinstance(final_data, dict):
+                            full_response = final_data
+                except json.JSONDecodeError:
+                    # Handle non-JSON lines (shouldn't happen with proper script)
+                    pass
+            
+            # Wait for process to complete
+            process.wait()
+            
+            if process.returncode != 0:
+                error_output = process.stderr.read() if process.stderr else "Unknown error"
+                raise RuntimeError(f"Remote streaming execution failed: {error_output[-1000:]}")
+            
+            return full_response
+            
+        except Exception as e:
+            raise RuntimeError(f"Remote streaming execution error: {e}")
 
     def _run_terminal(self, tool_input: Dict[str, Any]) -> str:
         command = str(tool_input.get("command", "")).strip()
