@@ -135,8 +135,7 @@ Users wanted a better way to edit multi-line input directly in the terminal, sim
 
 #### a) New `read_multiline_input()` function in `claw_ui.py`
 - Uses `prompt_toolkit` library for rich multi-line editing
-- Shows placeholder "work with claw-coder on a complex project" when input is empty
-- Changes to simple `❭ ` prompt when user starts typing
+- Shows prompt: "work with claw-coder on a complex project ❭ "
 - Supports keyboard shortcuts:
   - `Enter` - Accept and send the input (standard multi-line behavior)
   - `Ctrl+C` - Cancel and exit (handled by main application)
@@ -154,7 +153,7 @@ Users wanted a better way to edit multi-line input directly in the terminal, sim
 1. **Inline Editing**: Edit text directly in the terminal without external editors
 2. **Multi-line Support**: Write complex prompts with proper formatting
 3. **Keyboard Shortcuts**: Intuitive shortcuts for accepting/canceling input
-4. **Dynamic Placeholder**: Shows "work with claw-coder on a complex project" when empty, changes to `❭ ` when typing
+4. **Static Prompt**: Shows "work with claw-coder on a complex project ❭ " consistently
 5. **Fallback Support**: Works even if `prompt_toolkit` is not installed
 
 ### Usage

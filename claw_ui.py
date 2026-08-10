@@ -516,24 +516,19 @@ def read_multiline_input() -> str:
         from prompt_toolkit import prompt
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.keys import Keys
-        from prompt_toolkit.filters import Condition
         
         # Custom key bindings
         kb = KeyBindings()
         
-        # Enter on empty line accepts input (standard multi-line behavior)
-        # Enter with text creates new line
-        
         # Don't bind Ctrl+C - let it fall through to application-level handler
         # This prevents conflicts with the main application's KeyboardInterrupt handling
         
-        # Use prompt with placeholder - prompt_toolkit handles multi-line with Enter to accept
+        # Use prompt with the full text in the prompt
         result = prompt(
-            '❭ ',
+            'work with claw-coder on a complex project ❭ ',
             multiline=True,
             key_bindings=kb,
             enable_suspend=True,
-            placeholder='work with claw-coder on a complex project',
         )
         
         return result.strip()
@@ -543,7 +538,7 @@ def read_multiline_input() -> str:
         lines = []
         while True:
             try:
-                line = input('❭ ')
+                line = input('work with claw-coder on a complex project ❭ ')
                 if line == "":
                     break
                 lines.append(line)
