@@ -516,24 +516,20 @@ def read_multiline_input() -> str:
         from prompt_toolkit import prompt
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.keys import Keys
-        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.filters import Condition
         
         # Custom key bindings
         kb = KeyBindings()
         
-        @kb.add(Keys.ControlD)
-        def _(event):
-            """Accept input on Ctrl+D."""
-            event.app.exit(result=event.app.current_buffer.text)
+        # Enter on empty line accepts input (standard multi-line behavior)
+        # Enter with text creates new line
         
-        @kb.add(Keys.ControlC)
-        def _(event):
-            """Cancel input on Ctrl+C."""
-            event.app.exit(result="")
+        # Don't bind Ctrl+C - let it fall through to application-level handler
+        # This prevents conflicts with the main application's KeyboardInterrupt handling
         
-        # Use prompt with placeholder - prompt_toolkit handles placeholder text automatically
+        # Use prompt with placeholder - prompt_toolkit handles multi-line with Enter to accept
         result = prompt(
-            HTML('<style fg="cyan">❭ </style>'),
+            '❭ ',
             multiline=True,
             key_bindings=kb,
             enable_suspend=True,
@@ -542,13 +538,12 @@ def read_multiline_input() -> str:
         
         return result.strip()
         
-    except ImportError:
-        # Fallback to simple multi-line input if prompt_toolkit not available
-        print("work with claw-coder on a complex project ❭ (Enter empty line to finish)")
+    except Exception as e:
+        # Fallback to simple multi-line input if prompt_toolkit fails
         lines = []
         while True:
             try:
-                line = input()
+                line = input('❭ ')
                 if line == "":
                     break
                 lines.append(line)

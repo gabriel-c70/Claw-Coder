@@ -138,8 +138,8 @@ Users wanted a better way to edit multi-line input directly in the terminal, sim
 - Shows placeholder "work with claw-coder on a complex project" when input is empty
 - Changes to simple `❭ ` prompt when user starts typing
 - Supports keyboard shortcuts:
-  - `Ctrl+D` - Accept and send the input
-  - `Ctrl+C` - Cancel input
+  - `Enter` - Accept and send the input (standard multi-line behavior)
+  - `Ctrl+C` - Cancel and exit (handled by main application)
 - Multi-line support with proper text editing capabilities
 - Falls back to simple multi-line input if `prompt_toolkit` is not available
 
