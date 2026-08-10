@@ -516,37 +516,36 @@ def read_multiline_input() -> str:
         from prompt_toolkit import prompt
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.keys import Keys
+        from prompt_toolkit.shortcuts import PromptSession
+        from prompt_toolkit.layout import Layout
+        from prompt_toolkit.layout.containers import Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.dimension import D
+        from prompt_toolkit.filters import Condition
         
         # Custom key bindings
         kb = KeyBindings()
         
-        # Don't bind Ctrl+C - let it fall through to application-level handler
-        # This prevents conflicts with the main application's KeyboardInterrupt handling
+        @kb.add(Keys.Enter)
+        def _(event):
+            """Accept input on Enter."""
+            event.app.exit(result=event.app.current_buffer.text)
         
-        # Use prompt with the full text in the prompt
-        result = prompt(
-            'work with claw-coder on a complex project ❭ ',
+        # Use PromptSession for multi-line editing
+        session = PromptSession(key_bindings=kb)
+        
+        # Get user input with multi-line support
+        result = session.prompt(
+            '❭ ',
             multiline=True,
-            key_bindings=kb,
             enable_suspend=True,
         )
         
         return result.strip()
         
     except Exception as e:
-        # Fallback to simple multi-line input if prompt_toolkit fails
-        lines = []
-        while True:
-            try:
-                line = input('work with claw-coder on a complex project ❭ ')
-                if line == "":
-                    break
-                lines.append(line)
-            except EOFError:
-                break
-            except KeyboardInterrupt:
-                return ""
-        return "\n".join(lines).strip()
+        # Fallback to simple input
+        return read_user_input()
 
 
 def open_editor_for_input(initial_text: str = "") -> str:
