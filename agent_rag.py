@@ -3375,7 +3375,6 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                         • /pdf <file> - Load PDF document
                         • /title - Set conversation title
                         • exit or quit - Quit application
-                        • Ctrl+D - Accept multi-line input
                         • Ctrl+C - Cancel input
                     """
 
