@@ -37,6 +37,7 @@ import hashlib
 import tempfile
 import sys
 import webbrowser
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Iterable, Optional, Tuple, Set
@@ -44,7 +45,6 @@ from urllib.parse import urlparse
 import shlex
 from tree_sitter import Parser
 from dotenv import load_dotenv
-import time
 import re
 from agent_knowledge import (
     DEFAULT_GRAPH_PATH,
@@ -72,7 +72,8 @@ from claw_ui import (
     set_terminal_title,
     validate_ollama_model,
     print_print_goodbye,
-    RICH_AVAILABLE
+    RICH_AVAILABLE,
+    _console
 )
 
 try:
@@ -3470,7 +3471,6 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 "Connecting ideas....", "Gathering items for this task....", "Reviewing the info....",
                 "Formulating the outcomes....", "Checking details....", "Piecing things together....", "Backing....", "Joggling the tasks literally....", "Cogitating...."
             ]
-            import random
             
             # Use tool status display for better UX
             tool_display = ToolStatusDisplay()
