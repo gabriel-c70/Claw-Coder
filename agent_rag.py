@@ -71,7 +71,8 @@ from claw_ui import (
     resolve_chat_model,
     set_terminal_title,
     validate_ollama_model,
-    print_print_goodbye
+    print_print_goodbye,
+    RICH_AVAILABLE
 )
 
 try:
