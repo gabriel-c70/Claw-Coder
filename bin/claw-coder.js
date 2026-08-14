@@ -5,7 +5,7 @@ const { spawnSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { login, loadSession, clearSession } = require("./auth");
+const { login, loadSession, clearSession, hasCompletedNewVersionLogin } = require("./auth");
 const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "qwen3-embedding:4b", "translategemma:4b"]
 
 const packageRoot = path.resolve(__dirname, "..");
@@ -35,7 +35,6 @@ const HELP = `
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 📖 USAGE:
-  claw <command> [options]
   claw-coder <command> [options]
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -97,15 +96,15 @@ const HELP = `
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║ 📝 EXAMPLES                                                                  ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  claw setup                    Install dependencies                          ║
-║  claw doctor                   Check system setup                            ║
-║  claw ingest .                 Ingest current directory                      ║
-║  claw graph "imports tree" --depth 2    Search knowledge graph               ║ 
-║  claw search "reranking" --top-k 5       Search with context                 ║
+║  claw-coder setup               Install dependencies                          ║
+║  claw-coder doctor              Check system setup                            ║
+║  claw-coder ingest .            Ingest current directory                      ║
+║  claw-coder graph "imports tree" --depth 2    Search knowledge graph          ║ 
+║  claw-coder search "reranking" --top-k 5       Search with context            ║
 ║  claw-coder                    Start interactive chat                       ║
 ║  claw-coder --pdf report.pdf   Chat with PDF context                         ║
 ║  claw-coder --ui textual       Use improved UI with scrolling & selection     ║
-║  claw qwen2.5-coder:7b         Use specific model                            ║
+║  claw-coder qwen2.5-coder:7b   Use specific model                            ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 🌐 Visit https://github.com/gabriel-c70/Claw-Coder.git for more information
@@ -225,7 +224,7 @@ function findPython() {
   // Only warn if we're in the Claw-Coder directory (users can run claw from anywhere)
   if (process.cwd() === packageRoot) {
     console.warn(`Note: No Claw-Coder virtual environment found.`);
-    console.warn(`  It's recommended to run 'claw setup' to create a proper isolated environment.`);
+    console.warn(`  It's recommended to run 'claw-coder setup' to create a proper isolated environment.`);
   }
 
 
@@ -452,7 +451,7 @@ function ensureDependencies(python) {
   const missing = checkPythonDependencies(python);
   
   if (missing === null) {
-    console.error("Error checking Python dependencies. Please run `claw setup` manually.");
+    console.error("Error checking Python dependencies. Please run `claw-coder setup` manually.");
     return false;
   }
   
@@ -479,7 +478,7 @@ function ensureDependencies(python) {
   
   if (!fs.existsSync(requirementsFile)) {
     console.error(`Missing requirements file: ${requirementsFile}`);
-    console.error("Please run `claw setup` manually.");
+    console.error("Please run `claw-coder setup` manually.");
     return false;
   }
   
@@ -497,7 +496,7 @@ function ensureDependencies(python) {
       console.error("2. Or fix pip in this environment:");
       console.error("   python -m ensurepip --upgrade");
       console.error("3. Or use Claw-Coder's built-in environment by running:");
-      console.error("   claw setup");
+      console.error("   claw-coder setup");
       return false;
     }
     console.warn("Warning: Failed to upgrade pip (this is usually not critical)");
@@ -521,11 +520,11 @@ function ensureDependencies(python) {
       console.error("2. Or fix pip in this environment:");
       console.error("   python -m ensurepip --upgrade");
       console.error("3. Or use Claw-Coder's built-in environment by running:");
-      console.error("   claw setup");
+      console.error("   claw-coder setup");
       return false;
     }
     console.error("Failed to install Python dependencies automatically.");
-    console.error("Please run `claw setup` manually to install dependencies.");
+    console.error("Please run `claw-coder setup` manually to install dependencies.");
     return false;
   }
   
@@ -535,7 +534,7 @@ function ensureDependencies(python) {
   const stillMissing = checkPythonDependencies(python);
   if (stillMissing && stillMissing.length > 0) {
     console.error(`Some dependencies still missing: ${stillMissing.join(', ')}`);
-    console.error("Please run `claw setup` manually.");
+    console.error("Please run `claw-coder setup` manually.");
     return false;
   }
   
@@ -664,7 +663,7 @@ function runSetup() {
   if (pyVersion === "3.13") {
     console.warn(
       "Warning: Python 3.13 cannot install ChromaDB (vector RAG). "
-      + "Remove ./venv and run `claw setup` again so it can create a Python 3.12 environment.",
+      + "Remove ./venv and run `claw-coder setup` again so it can create a Python 3.12 environment.",
     );
   }
 
@@ -680,7 +679,7 @@ function runSetup() {
     { cwd: packageRoot },
   );
   if (result.status !== 0) {
-    console.error("Python dependency install failed. Check your network connection and run `claw setup` again.");
+    console.error("Python dependency install failed. Check your network connection and run `claw-coder setup` again.");
   }
   console.log("");
   installOllama();
@@ -731,7 +730,7 @@ function runDoctor() {
       process.stderr.write(importCheck.stderr);
     }
     if (importCheck.status !== 0 && !importCheck.stdout.includes("NO  Python packages missing")) {
-      console.log("NO  Python packages: missing; run `claw setup`");
+      console.log("NO  Python packages: missing; run `claw-coder setup`");
     }
   }
 }
@@ -755,7 +754,7 @@ async function apiFetch(pathname, session, options = {}) {
 
     if (response.status === 401) {
       clearSession();
-      throw new Error("Your session is invalid or expired. Run `claw login` or `claw-coder login` again.");
+      throw new Error("Your session is invalid or expired. Run `claw-coder login` again.");
     }
 
     const text = await response.text();
@@ -953,7 +952,7 @@ function startOllamaServe() {
     return true;
   }
   if (!commandExists("ollama")) {
-    console.error("Ollama isn't installed - cannot start it. Run `claw setup` first.");
+    console.error("Ollama isn't installed - cannot start it. Run `claw-coder setup` first.");
     return false;
   }
   
@@ -1089,7 +1088,7 @@ function pullDefaultModels(models) {
 
 function ensureOllamaReadyForChat() {
   // best-effort auto start before any chat-driving command, in case the
-  // machine rebooted since `claw setup` last ran ollama serve.
+  // machine rebooted since `claw-coder setup` last ran ollama serve.
   if (commandExists("ollama") && !isOllamaRunning()) {
     startOllamaServe();
   }
@@ -1098,7 +1097,7 @@ function ensureOllamaReadyForChat() {
 function requireSession() {
   const session = loadSession();
   if (!session) {
-    throw new Error("Not logged in. Run: claw login or claw-coder login");
+    throw new Error("Not logged in. Run: claw-coder login");
   }
   return session;
 }
@@ -1187,10 +1186,45 @@ async function main() {
 
   const pkg = require(path.join(packageRoot, "package.json"));
   
+  // Check if user needs to complete new version login
+  if (!hasCompletedNewVersionLogin() && command !== "login" && command !== "logout" && command !== "--help" && command !== "-h" && command !== "help" && command !== "--version" && command !== "-v" && command !== "setup" && command !== "doctor") {
+    const hasOldSession = loadSession() !== null;
+    console.log("\n┌─────────────────────────────────────────┐");
+    console.log("│     Welcome to the New Claw-Coder!      │");
+    console.log("├─────────────────────────────────────────┤");
+    console.log("│  This version requires a fresh login      │");
+    console.log("│  to unlock all features and capabilities │");
+    if (hasOldSession) {
+      console.log("├─────────────────────────────────────────┤");
+      console.log("│  We detected an existing session. Please  │");
+      console.log("│  login again to upgrade to the new version │");
+    }
+    console.log("├─────────────────────────────────────────┤");
+    console.log("│  Please login once to get started:       │");
+    console.log("│  Run: claw-coder login                   │");
+    console.log("└─────────────────────────────────────────┘\n");
+    process.exitCode = 0;
+    return;
+  }
+  
+  // If user has completed new version login but session expired, prompt to login again
+  if (hasCompletedNewVersionLogin() && !loadSession() && command !== "login" && command !== "logout" && command !== "--help" && command !== "-h" && command !== "help" && command !== "--version" && command !== "-v" && command !== "setup" && command !== "doctor") {
+    console.log("\n┌─────────────────────────────────────────┐");
+    console.log("│     Session Expired                      │");
+    console.log("├─────────────────────────────────────────┤");
+    console.log("│  Your session has expired. Please login   │");
+    console.log("│  again to continue using Claw-Coder:     │");
+    console.log("├─────────────────────────────────────────┤");
+    console.log("│  Run: claw-coder login                   │");
+    console.log("└─────────────────────────────────────────┘\n");
+    process.exitCode = 0;
+    return;
+  }
+  
   const latestVersion = await checkForUpdate();
   if (latestVersion && isNewerVersion(latestVersion, pkg.version)) {
     console.log(`\n  A new version of claw-coder is available: ${pkg.version} → ${latestVersion}`);
-    console.log(`  Run \`claw upgrade\` to update.\n`);
+    console.log(`  Run \`claw-coder upgrade\` to update.\n`);
   }
 
   // Handle help commands
@@ -1266,7 +1300,8 @@ async function main() {
 }
   if (command === "logout") {
     clearSession();
-    console.log("Logged out. Run `claw login` or `claw-coder login` to log in again.");
+    console.log("Logged out. Run `claw-coder login` to log in again.");
+    console.log("Note: You'll need to complete the new version login again.");
     return;
 }
   if (command === "telemetry") {
@@ -1284,7 +1319,7 @@ async function main() {
   if (command === "whoami") {
     const session = loadSession();
   if (!session) {
-    console.log("Not logged in. Run: claw login or claw-coder login");
+    console.log("Not logged in. Run: claw-coder login");
   } else {
         console.log(`Logged in as: ${session.user?.email}`);
         const exp = new Date(session.expires_at * 1000).toLocaleString();
@@ -1371,10 +1406,10 @@ async function main() {
         console.log("\n" + "─".repeat(54));
         if (plan === "starter") {
           console.log("  📝 Starter plan is used first. After that, paid credits are used.");
-          console.log("  🚀 Run `claw upgrade-plan` to subscribe or `claw topup` for extra credits.\n");
+          console.log("  🚀 Run `claw-coder upgrade-plan` to subscribe or `claw-coder topup` for extra credits.\n");
         } else {
           console.log("  ⚡ Pro plan: Each tool has a soft limit that are within the paid credits.");
-          console.log("  💳 After reaching the soft limit the available or the remaining credits will still be consumed if there are no remaining credits you can run claw topup or claw upgrade-plan anytime.\n");
+          console.log("  💳 After reaching the soft limit the available or the remaining credits will still be consumed if there are no remaining credits you can run claw-coder topup or claw-coder upgrade-plan anytime.\n");
         }
       })
       .catch((err) => {
@@ -1420,10 +1455,10 @@ async function main() {
         
         if (plan === "FREE" && credits < 100) {
           console.log("  ⚠️ Low credits! Consider upgrading to Pro for more features.");
-          console.log("  🚀 Run `claw upgrade-plan` to subscribe or `claw topup` for extra credits.\n");
+          console.log("  🚀 Run `claw-coder upgrade-plan` to subscribe or `claw-coder topup` for extra credits.\n");
         } else if (plan === "PRO" && credits < 50) {
           console.log("  ⚠️ Running low on credits!");
-          console.log("  🚀 Run `claw topup` for extra credits.\n");
+          console.log("  🚀 Run `claw-coder topup` for extra credits.\n");
         }
       })
       .catch((err) => {
@@ -1541,7 +1576,7 @@ async function main() {
         } catch {}
         
         console.log("  📝 After payment, your credits will be added automatically.");
-        console.log("  🔄 Run `claw credits` to check your balance after payment.\n");
+        console.log("  🔄 Run `claw-coder credits` to check your balance after payment.\n");
       })
       .catch((err) => {
         console.error(`❌ Could not create top-up checkout: ${err.message}`);
@@ -1562,7 +1597,7 @@ async function main() {
     console.error("├─────────────────────────────────────────--┤");
     console.error("│  You need to log in to use this command   │");
     console.error("│                                           │");
-    console.error("│  Run: claw login or claw-coder login       │");
+    console.error("│  Run: claw-coder login                   │");
     console.error("│                                           │");
     console.error("│  This will enable:                        │");
     console.error("│  • Full Claw-Coder capabilities           │");

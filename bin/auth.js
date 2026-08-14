@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
+const NEW_VERSION_LOGIN_FILE = path.join(SESSION_DIR, "new_version_login_complete");
 
 const BAKED_CONFIG = {
   supabaseUrl:    "https://nqbrdafvdfntxvhbyama.supabase.co",
@@ -52,6 +53,8 @@ function loadSession() {
     const data = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
 
     if (data.expires_at && Date.now() / 1000 > data.expires_at - 60) {
+      // Session expired, clear only the session file (keep new version login flag)
+      if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
       return null;
     }
 
@@ -69,6 +72,17 @@ function loadSession() {
 
 function clearSession() {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
+  if (fs.existsSync(NEW_VERSION_LOGIN_FILE)) fs.unlinkSync(NEW_VERSION_LOGIN_FILE);
+}
+
+function hasCompletedNewVersionLogin() {
+  return fs.existsSync(NEW_VERSION_LOGIN_FILE);
+}
+
+function markNewVersionLoginComplete() {
+  fs.mkdirSync(SESSION_DIR, { recursive: true });
+  fs.writeFileSync(NEW_VERSION_LOGIN_FILE, Date.now().toString(), "utf8");
+  try { fs.chmodSync(NEW_VERSION_LOGIN_FILE, 0o600); } catch {}
 }
 
 function getApiUrl() {
@@ -226,6 +240,7 @@ async function login() {
     };
 
     saveSession(session);
+    markNewVersionLoginComplete();
     console.log("\n┌────────────────────────────────────────--─┐");
     console.log("  │         Login Successful!                 │");
     console.log("  ├─────────────────────────────────────────--┤");
@@ -241,4 +256,4 @@ async function login() {
   throw new Error("Login timed out — the code expired. Run claw login to try again.");
 }
 
-module.exports = { login, loadSession, clearSession };
+module.exports = { login, loadSession, clearSession, hasCompletedNewVersionLogin, markNewVersionLoginComplete };
