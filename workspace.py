@@ -5,12 +5,11 @@ Local mode stays the default. When a user opts into workspace mode, Claw keeps
 the terminal UI and auth local while chat, model pulls, and coding tools run on
 the user's Codespace over SSH.
 """
+from __future__ import annotations
 
 import sys
 import io
 from contextlib import redirect_stdout
-
-from __future__ import annotations
 
 import base64
 import json
