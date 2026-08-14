@@ -9,7 +9,7 @@ const SESSION_FILE = path.join(SESSION_DIR, "session.json");
 
 const BAKED_CONFIG = {
   supabaseUrl:    "https://nqbrdafvdfntxvhbyama.supabase.co",
-  anonKey:        "sb_publishable_dJ4iZhUk8OySw4avgJ6Q7g_rsr_eUgg",
+  anonKey:        "sb_publishable_fKGO3iZ6nCEtPUqPsQb_nQ_jIXwMtCJ",
   githubClientId: "Ov23li6ZYK8WmGloMm90",
 };
 

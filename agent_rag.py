@@ -85,7 +85,88 @@ except ImportError:
 load_dotenv()
 
 RATE_LIMIT_API_URL = os.getenv("RATE_LIMIT_API_URL", "https://claw-coder-3.onrender.com")
-RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", "90"))
+
+# Detect if running in Codespaces or similar environment
+is_codespaces = os.getenv("GITHUB_CODESPACES") == "true" or os.getenv("CODESPACES") == "true"
+default_timeout = 180 if is_codespaces else 90  # 3 min for Codespaces, 90s otherwise
+RATE_LIMIT_TIMEOUT_SECONDS = int(os.getenv("RATE_LIMIT_TIMEOUT_SECONDS", str(default_timeout)))
+
+def get_ollama_pid_file():
+    """Get the path to the Ollama PID file."""
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "ollama.pid")
+
+def save_ollama_pid(pid):
+    """Save the Ollama process PID to a file."""
+    try:
+        with open(get_ollama_pid_file(), 'w') as f:
+            f.write(str(pid))
+    except Exception:
+        pass  # Ignore errors writing PID file
+
+def get_ollama_pid():
+    """Get the saved Ollama process PID."""
+    try:
+        if os.path.exists(get_ollama_pid_file()):
+            with open(get_ollama_pid_file(), 'r') as f:
+                return int(f.read().strip())
+    except Exception:
+        pass
+    return None
+
+def clear_ollama_pid():
+    """Clear the saved Ollama PID file."""
+    try:
+        if os.path.exists(get_ollama_pid_file()):
+            os.remove(get_ollama_pid_file())
+    except Exception:
+        pass
+
+def is_process_running(pid):
+    """Check if a process with the given PID is running."""
+    try:
+        import signal
+        os.kill(pid, 0)  # Send signal 0 to check if process exists
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+def get_system_memory():
+    """Get available system memory in MB."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available // (1024 * 1024)  # Convert to MB
+    except ImportError:
+        # Fallback: return a conservative estimate if psutil is not available
+        return 2048  # Assume 2GB available
+
+def optimize_for_codespaces():
+    """Apply Codespaces-specific optimizations."""
+    if not is_codespaces:
+        return
+    
+    available_memory = get_system_memory()
+    logging.info(f"Available memory: {available_memory} MB")
+    
+    # Set environment variables based on available memory
+    if available_memory < 4096:  # Less than 4GB
+        os.environ['OLLAMA_NUM_PARALLEL'] = '1'
+        os.environ['OLLAMA_MAX_QUEUE'] = '256'
+        os.environ['OLLAMA_LOAD_TIMEOUT'] = '30m'
+        os.environ['OLLAMA_REQUEST_TIMEOUT'] = '30m'
+        logging.info("Applied low-memory configuration")
+    elif available_memory < 8192:  # Less than 8GB
+        os.environ['OLLAMA_NUM_PARALLEL'] = '1'
+        os.environ['OLLAMA_MAX_QUEUE'] = '512'
+        os.environ['OLLAMA_LOAD_TIMEOUT'] = '20m'
+        os.environ['OLLAMA_REQUEST_TIMEOUT'] = '20m'
+        logging.info("Applied medium-memory configuration")
+    else:
+        os.environ['OLLAMA_NUM_PARALLEL'] = '1'
+        os.environ['OLLAMA_MAX_QUEUE'] = '1024'
+        os.environ['OLLAMA_LOAD_TIMEOUT'] = '10m'
+        os.environ['OLLAMA_REQUEST_TIMEOUT'] = '10m'
+        logging.info("Applied high-memory configuration")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -248,41 +329,101 @@ def ensure_ollama_running() -> bool:
             env = os.environ.copy()
             env.update({
                 'OLLAMA_KEEP_ALIVE': '-1',  # Keep models loaded indefinitely
-                'OLLAMA_NUM_LOAD_RETRY': '10',  # Retry loading models more times
-                'OLLAMA_LOAD_TIMEOUT': '10m',  # Longer timeout for loading models
-                'OLLAMA_MAX_QUEUE': '512',  # Allow more queued requests
+                'OLLAMA_NUM_LOAD_RETRY': '20' if is_codespaces else '10',  # More retries in Codespaces
+                'OLLAMA_LOAD_TIMEOUT': '20m' if is_codespaces else '10m',  # Longer timeout in Codespaces
+                'OLLAMA_REQUEST_TIMEOUT': '20m' if is_codespaces else '10m',  # Longer timeout in Codespaces
+                'OLLAMA_MAX_QUEUE': '1024' if is_codespaces else '512',  # Larger queue in Codespaces
+                'OLLAMA_NUM_PARALLEL': '1',  # Keep single parallel for stability
+                'OLLAMA_HOST': '0.0.0.0' if is_codespaces else '127.0.0.1',  # Listen on all interfaces for Codespaces
+                'OLLAMA_ORIGINS': '*' if is_codespaces else '',  # Allow all origins for Codespaces
             })
+            
+            # Add Codespaces-specific memory optimizations
+            if is_codespaces:
+                env.update({
+                    'OLLAMA_DEBUG': '1',  # Enable debug logging for troubleshooting
+                    'OLLAMA_LLM_LIBRARY': 'cpu',  # Force CPU usage in Codespaces
+                    'OLLAMA_GPU_LAYERS': '0',  # Disable GPU layers in Codespaces (save memory)
+                    'OLLAMA_F16KV': '1',  # Use half-precision KV cache (save memory)
+                })
+            
+            # Clear any stale PID file
+            clear_ollama_pid()
             
             if platform.system() == "Windows":
                 # Windows: use start command to run in background
-                subprocess.Popen(
+                proc = subprocess.Popen(
                     ["ollama", "serve"],
                     creationflags=subprocess.DETACHED_PROCESS,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=env
                 )
+                save_ollama_pid(proc.pid)
+                logging.info(f"Ollama started with PID: {proc.pid}")
             else:
                 # Unix-like: use nohup to run in background
-                subprocess.Popen(
+                proc = subprocess.Popen(
                     ["nohup", "ollama", "serve"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
                     env=env
                 )
+                save_ollama_pid(proc.pid)
+                logging.info(f"Ollama started with PID: {proc.pid}")
             
-            # Wait for ollama to start
-            for attempt in range(30):  # 30 attempts, 1 second each (increased from 15)
+            # Wait for ollama to start with monitoring and auto-restart
+            max_attempts = 60 if is_codespaces else 30  # 60s for Codespaces, 30s otherwise
+            last_check_time = time.time()
+            
+            for attempt in range(max_attempts):
                 time.sleep(1)
+                
+                # Check if the process is still running
+                saved_pid = get_ollama_pid()
+                if saved_pid and not is_process_running(saved_pid):
+                    logging.warning(f"Ollama process (PID {saved_pid}) died unexpectedly. Attempting restart...")
+                    clear_ollama_pid()
+                    
+                    # Try to restart once
+                    if attempt < max_attempts - 10:  # Leave time for restart attempt
+                        time.sleep(2)
+                        if platform.system() == "Windows":
+                            restart_proc = subprocess.Popen(
+                                ["ollama", "serve"],
+                                creationflags=subprocess.DETACHED_PROCESS,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                env=env
+                            )
+                        else:
+                            restart_proc = subprocess.Popen(
+                                ["nohup", "ollama", "serve"],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True,
+                                env=env
+                            )
+                        save_ollama_pid(restart_proc.pid)
+                        logging.info(f"Ollama restarted with PID: {restart_proc.pid}")
+                        continue
+                
                 try:
                     ollama.list()
                     logging.info("Ollama started successfully")
                     return True
                 except Exception:
+                    # Print progress every 5 seconds
+                    if time.time() - last_check_time > 5:
+                        progress = round((attempt / max_attempts) * 100)
+                        logging.info(f"Waiting for Ollama to start... ({progress}%)")
+                        last_check_time = time.time()
                     continue
             
-            logging.warning("Failed to start ollama after 30 seconds")
+            logging.warning(f"Failed to start ollama after {max_attempts} seconds")
+            if is_codespaces:
+                logging.warning("In Codespaces, Ollama may take longer to start due to resource constraints.")
             return False
         except Exception as e:
             logging.error(f"Failed to start ollama: {e}")
@@ -3598,6 +3739,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Apply Codespaces optimizations at startup
+    try:
+        optimize_for_codespaces()
+    except Exception as e:
+        logging.warning(f"Could not apply Codespaces optimizations: {e}")
+    
     try:
         main()
     except KeyboardInterrupt:

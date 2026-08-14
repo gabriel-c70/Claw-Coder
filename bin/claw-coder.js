@@ -36,15 +36,16 @@ const HELP = `
 
 📖 USAGE:
   claw <command> [options]
+  claw-coder <command> [options]
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║ 💬 CHAT & INTERACTION                                                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  chat [--pdf <file>...]         Start interactive chat (optionally preload   ║
-║                                PDFs)                                         ║
-║  chat --ui textual              Use improved UI with scrolling & selection   ║
-║  models                         List local Ollama models                     ║
-║  <model-name>                   Start chat with specific Ollama model        ║
+║  claw-coder [--pdf <file>...]    Start interactive chat (optionally preload  ║
+║                                  PDFs)                                        ║
+║  claw-coder --ui textual         Use improved UI with scrolling & selection ║
+║  models                           List local Ollama models                    ║
+║  <model-name>                     Start claw-coder with specific Ollama model   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -88,7 +89,7 @@ const HELP = `
 ║  --graph <file>                 Knowledge graph JSON path                    ║
 ║  --db <dir>                     ChromaDB directory                           ║
 ║  --collection <name>            ChromaDB collection                          ║
-║  --model <name>                 Ollama chat model                            ║
+║  --model <name>                 Ollama model for claw-coder                    ║
 ║  --embedding-model <name>       Ollama embedding model                       ║
 ║  --ui <rich|textual>            Choose UI style (default: rich)              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -101,9 +102,9 @@ const HELP = `
 ║  claw ingest .                 Ingest current directory                      ║
 ║  claw graph "imports tree" --depth 2    Search knowledge graph               ║ 
 ║  claw search "reranking" --top-k 5       Search with context                 ║
-║  claw chat                     Start interactive chat                        ║
-║  claw chat --pdf report.pdf    Chat with PDF context                         ║
-║  claw chat --ui textual        Use improved UI with scrolling & selection -beta not advised to be used║
+║  claw-coder                    Start interactive chat                       ║
+║  claw-coder --pdf report.pdf   Chat with PDF context                         ║
+║  claw-coder --ui textual       Use improved UI with scrolling & selection     ║
 ║  claw qwen2.5-coder:7b         Use specific model                            ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -115,11 +116,13 @@ function printHelp() {
 }
 
 function run(command, args, options = {}) {
+  const timeout = options.timeout || 0;
   const result = spawnSync(command, args, {
     cwd: options.cwd || process.cwd(),
     stdio: options.stdio || "inherit",
     env: options.env || process.env,
     encoding: "utf8",
+    timeout: timeout,
   });
 
   if (result.error) {
@@ -133,7 +136,8 @@ function run(command, args, options = {}) {
 }
 
 function commandExists(command, args = ["--version"]) {
-  const result = run(command, args, { stdio: "pipe" });
+  const timeout = isCodespaces() ? 30000 : 10000; // 30s for Codespaces, 10s otherwise
+  const result = run(command, args, { stdio: "pipe", timeout: timeout });
   return result.status === 0;
 }
 
@@ -751,7 +755,7 @@ async function apiFetch(pathname, session, options = {}) {
 
     if (response.status === 401) {
       clearSession();
-      throw new Error("Your session is invalid or expired. Run `claw login` again.");
+      throw new Error("Your session is invalid or expired. Run `claw login` or `claw-coder login` again.");
     }
 
     const text = await response.text();
@@ -817,9 +821,82 @@ function sleepSync(ms) {
   }
 }
 
+function isCodespaces() {
+  return process.env.GITHUB_CODESPACES === "true" || process.env.CODESPACES === "true";
+}
+
+function getOllamaPidFile() {
+  const path = require("path");
+  const os = require("os");
+  return path.join(os.tmpdir(), "ollama.pid");
+}
+
+function saveOllamaPid(pid) {
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const os = require("os");
+    const pidFile = getOllamaPidFile();
+    fs.writeFileSync(pidFile, pid.toString(), "utf8");
+  } catch (e) {
+    // Ignore errors writing pid file
+  }
+}
+
+function getOllamaPid() {
+  try {
+    const fs = require("fs");
+    const pidFile = getOllamaPidFile();
+    if (fs.existsSync(pidFile)) {
+      const pid = parseInt(fs.readFileSync(pidFile, "utf8").trim());
+      return pid;
+    }
+  } catch (e) {
+    // Ignore errors reading pid file
+  }
+  return null;
+}
+
+function clearOllamaPid() {
+  try {
+    const fs = require("fs");
+    const pidFile = getOllamaPidFile();
+    if (fs.existsSync(pidFile)) {
+      fs.unlinkSync(pidFile);
+    }
+  } catch (e) {
+    // Ignore errors clearing pid file
+  }
+}
+
+function isProcessRunning(pid) {
+  try {
+    const result = run("kill", ["-0", pid.toString()], { stdio: "pipe" });
+    return result.status === 0;
+  } catch (e) {
+    return false;
+  }
+}
+
 function isOllamaRunning() {
-  // ollama list will only work if daemon is actually reachable
-  const result = run("ollama", ["list"], { stdio: "pipe" });
+  // First check if we have a saved PID and if it's still running
+  const savedPid = getOllamaPid();
+  if (savedPid && isProcessRunning(savedPid)) {
+    // Verify the process is actually Ollama by testing the API
+    const timeout = isCodespaces() ? 30000 : 10000; // 30s for Codespaces, 10s otherwise
+    const result = run("ollama", ["list"], { 
+      stdio: "pipe",
+      timeout: timeout
+    });
+    return result.status === 0;
+  }
+  
+  // No saved PID or process not running, check if ollama is running at all
+  const timeout = isCodespaces() ? 30000 : 10000; // 30s for Codespaces, 10s otherwise
+  const result = run("ollama", ["list"], { 
+    stdio: "pipe",
+    timeout: timeout
+  });
   return result.status === 0;
 }
 function installOllama() {
@@ -882,6 +959,8 @@ function startOllamaServe() {
   
   // Kill any existing ollama serve processes to prevent conflicts
   console.log("Ensuring clean ollama startup...");
+  clearOllamaPid(); // Clear any stale PID file
+  
   if (process.platform === "win32") {
     run("taskkill", ["/F", "/IM", "ollama.exe"], { stdio: "pipe" });
   } else {
@@ -890,38 +969,118 @@ function startOllamaServe() {
   sleepSync(2000);
   
   console.log("Initializing 🦙  ollama in the unseen......");
-  const proc = spawn("ollama", ["serve"], {
-  detached: true,
-  stdio: ["ignore", "ignore", "ignore"],
-  env: { 
-    ...process.env, 
-    OLLAMA_KEEP_ALIVE: "-1",
-    OLLAMA_NUM_LOAD_RETRY: "10",
-    OLLAMA_LOAD_TIMEOUT: "10m",
-    OLLAMA_REQUEST_TIMEOUT: "10m",
-    OLLAMA_MAX_QUEUE: "512",
-    OLLAMA_NUM_PARALLEL: "1"
-  },
-});
-  proc.unref(); // let it keep running after Node process exits
   
-  // Poll every 500ms for up to 15s instead of 5s
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  // Configure environment for better stability in resource-constrained environments
+  const ollamaEnv = {
+    ...process.env,
+    // Basic stability settings
+    OLLAMA_KEEP_ALIVE: "-1",
+    OLLAMA_NUM_LOAD_RETRY: isCodespaces() ? "20" : "10", // More retries in Codespaces
+    OLLAMA_LOAD_TIMEOUT: isCodespaces() ? "20m" : "10m", // Longer timeout in Codespaces
+    OLLAMA_REQUEST_TIMEOUT: isCodespaces() ? "20m" : "10m", // Longer timeout in Codespaces
+    OLLAMA_MAX_QUEUE: isCodespaces() ? "1024" : "512", // Larger queue in Codespaces
+    OLLAMA_NUM_PARALLEL: "1", // Keep single parallel for stability
+    
+    // Codespaces-specific network settings
+    OLLAMA_HOST: isCodespaces() ? "0.0.0.0" : "127.0.0.1", // Listen on all interfaces for Codespaces
+    OLLAMA_ORIGINS: isCodespaces() ? "*" : "", // Allow all origins for Codespaces
+    
+    // Memory and resource management for Codespaces
+    ...(isCodespaces() ? {
+      OLLAMA_DEBUG: "1", // Enable debug logging for troubleshooting
+      OLLAMA_LLM_LIBRARY: "cpu", // Force CPU usage in Codespaces
+      OLLAMA_GPU_LAYERS: "0", // Disable GPU layers in Codespaces (save memory)
+      OLLAMA_F16KV: "1", // Use half-precision KV cache (save memory)
+    } : {}),
+  };
+  
+  // Create log directory for debugging
+  try {
+    const os = require("os");
+    const path = require("path");
+    const fs = require("fs");
+    const logDir = path.join(os.tmpdir(), "claw-coder");
+    fs.mkdirSync(logDir, { recursive: true });
+    const logFile = path.join(logDir, "ollama.log");
+    
+    const proc = spawn("ollama", ["serve"], {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore"],
+      env: ollamaEnv,
+    });
+    
+    // Save the PID for monitoring
+    saveOllamaPid(proc.pid);
+    proc.unref(); // let it keep running after Node process exits
+    
+    console.log(`Ollama started with PID: ${proc.pid}`);
+    
+  } catch (e) {
+    // Fallback without logging if directory creation fails
+    const proc = spawn("ollama", ["serve"], {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore"],
+      env: ollamaEnv,
+    });
+    
+    saveOllamaPid(proc.pid);
+    proc.unref();
+    console.log(`Ollama started with PID: ${proc.pid}`);
+  }
+  
+  // Poll every 500ms for up to 60s in Codespaces, 30s otherwise
+  const maxAttempts = isCodespaces() ? 120 : 60; // 60s for Codespaces, 30s otherwise
+  let lastCheckTime = Date.now();
+  
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     sleepSync(500);
+    
+    // Check if the process is still running
+    const savedPid = getOllamaPid();
+    if (savedPid && !isProcessRunning(savedPid)) {
+      console.warn(`Ollama process (PID ${savedPid}) died unexpectedly. Attempting restart...`);
+      clearOllamaPid();
+      
+      // Try to restart once
+      if (attempt < maxAttempts - 10) { // Leave time for restart attempt
+        sleepSync(2000);
+        const restartProc = spawn("ollama", ["serve"], {
+          detached: true,
+          stdio: ["ignore", "ignore", "ignore"],
+          env: ollamaEnv,
+        });
+        saveOllamaPid(restartProc.pid);
+        restartProc.unref();
+        console.log(`Ollama restarted with PID: ${restartProc.pid}`);
+        continue;
+      }
+    }
+    
     if (isOllamaRunning()) {
       console.log("Ollama is behaving.....");
       return true;
     }
+    
+    // Print progress every 5 seconds
+    if (Date.now() - lastCheckTime > 5000) {
+      console.log(`Waiting for Ollama to start... (${Math.round((attempt / maxAttempts) * 100)}%)`);
+      lastCheckTime = Date.now();
+    }
   }
 
-  console.warn("Ollama may still be starting up - if `claw chat` fails to connect, relax for a few seconds and then try again.");
+  console.warn("Ollama may still be starting up - if `claw-coder` fails to connect, relax for a few seconds and then try again.");
+  console.warn("In Codespaces, Ollama may take longer to start due to resource constraints.");
   return true;
 }
 
 function pullDefaultModels(models) {
   for (const model of models) {
     console.log(`Pulling ${model}...`);
-    const result = spawnSync("ollama", ["pull", model], { stdio: "inherit" });
+    const timeout = isCodespaces() ? 600000 : 300000; // 10 min for Codespaces, 5 min otherwise
+    const result = spawnSync("ollama", ["pull", model], { 
+      stdio: "inherit",
+      timeout: timeout
+    });
     if (result.status !== 0) {
       console.warn(`Warning: could not pull ${model}. You can retry later: ollama pull ${model}`);
     }
@@ -939,7 +1098,7 @@ function ensureOllamaReadyForChat() {
 function requireSession() {
   const session = loadSession();
   if (!session) {
-    throw new Error("Not logged in. Run: claw login");
+    throw new Error("Not logged in. Run: claw login or claw-coder login");
   }
   return session;
 }
@@ -952,7 +1111,7 @@ function buildAgentArgs(command, args) {
   const cleaned = stripKnownOptions(args);
   const hasFlag = (flag) => args.includes(flag);
 
-  if (command === "chat") {
+  if (command === "claw-coder") {
     ensureOllamaReadyForChat();
     const uiOption = readOption(args, ["--ui"]);
     const chatArgs = ["chat", ...collectDocumentOptions(args)];
@@ -1027,6 +1186,7 @@ async function main() {
   const commandArgs = args.slice(1)
 
   const pkg = require(path.join(packageRoot, "package.json"));
+  
   const latestVersion = await checkForUpdate();
   if (latestVersion && isNewerVersion(latestVersion, pkg.version)) {
     console.log(`\n  A new version of claw-coder is available: ${pkg.version} → ${latestVersion}`);
@@ -1034,6 +1194,12 @@ async function main() {
   }
 
   if (!command || command === "--help" || command === "-h" || command === "help") {
+    printHelp();
+    return;
+  }
+  
+  // Handle claw-coder help
+  if (command === "claw-coder" && (commandArgs[0] === "--help" || commandArgs[0] === "-h" || commandArgs[0] === "help")) {
     printHelp();
     return;
   }
@@ -1072,7 +1238,7 @@ async function main() {
     login(provider)
         .then((session) => {
         console.log(`\nLogged in as ${session.user?.email}`);
-        console.log("Run `claw chat` or any claw command to start.");
+        console.log("Run `claw-coder` to start using Claw-Coder.");
         })
         .catch((err) => {
         console.error(`Login failed: ${err.message}`);
@@ -1086,7 +1252,7 @@ async function main() {
 }
   if (command === "logout") {
     clearSession();
-    console.log("Logged out. Run `claw login` to log in again.");
+    console.log("Logged out. Run `claw login` or `claw-coder login` to log in again.");
     return;
 }
   if (command === "telemetry") {
@@ -1104,7 +1270,7 @@ async function main() {
   if (command === "whoami") {
     const session = loadSession();
   if (!session) {
-    console.log("Not logged in. Run: claw login");
+    console.log("Not logged in. Run: claw login or claw-coder login");
   } else {
         console.log(`Logged in as: ${session.user?.email}`);
         const exp = new Date(session.expires_at * 1000).toLocaleString();
@@ -1382,7 +1548,7 @@ async function main() {
     console.error("├─────────────────────────────────────────--┤");
     console.error("│  You need to log in to use this command   │");
     console.error("│                                           │");
-    console.error("│  Run: claw login                          │");
+    console.error("│  Run: claw login or claw-coder login       │");
     console.error("│                                           │");
     console.error("│  This will enable:                        │");
     console.error("│  • Full Claw-Coder capabilities           │");
@@ -1399,22 +1565,32 @@ async function main() {
 // ──────────────────────────────────────────────────────────
   // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
   const KNOWN_COMMANDS = new Set([
-    "chat", "models", "ingest", "ingest-code", "ingest-pdf", "search",
+    "claw-coder", "models", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
     "setup", "doctor", "raw", "embedding","usage", "credits", "upgrade-plan", "topup",
     "telemetry"
   ]);
 
   if (!KNOWN_COMMANDS.has(command)) {
-  const embeddingModel = commandArgs[0];  // optional second arg
-  const agentArgs = ["--model", command];
-  if (embeddingModel && !embeddingModel.startsWith("--")) {
-    agentArgs.push("--embedding-model", embeddingModel);
+    // If it's "chat", show error message
+    if (command === "chat") {
+      console.error("Error: 'claw chat' is no longer supported. Use 'claw-coder' instead.");
+      console.error("Example: claw-coder");
+      console.error("Example: claw-coder --pdf document.pdf");
+      process.exitCode = 1;
+      return;
+    }
+    
+    // Otherwise treat as model name
+    const embeddingModel = commandArgs[0];  // optional second arg
+    const agentArgs = ["--model", command];
+    if (embeddingModel && !embeddingModel.startsWith("--")) {
+      agentArgs.push("--embedding-model", embeddingModel);
+    }
+    agentArgs.push("chat");
+    runAgent(agentArgs);
+    return;
   }
-  agentArgs.push("chat");
-  runAgent(agentArgs);
-  return;
-}
   try {
     runAgent(buildAgentArgs(command, commandArgs));
   } catch (error) {

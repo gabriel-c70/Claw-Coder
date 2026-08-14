@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urlparse
 
+# Detect if running in Codespaces or similar environment
+is_codespaces = os.getenv("GITHUB_CODESPACES") == "true" or os.getenv("CODESPACES") == "true"
+
 
 SSH_CONFIG_PATH = Path.home() / ".ssh" / "config"
 SSH_MARKER_START = "# >>> claw-coder workspace >>>"
@@ -148,7 +151,7 @@ class WorkspaceConfig:
     remote_dir: str = DEFAULT_REMOTE_DIR
     remote_agent_dir: str = REMOTE_AGENT_DIR
     python: str = "python3"
-    timeout_seconds: int = 180  # 3 minutes for most operations
+    timeout_seconds: int = 300 if is_codespaces else 180  # 5 min for Codespaces, 3 min otherwise
     runpod_http_url: Optional[str] = None  # RunPod HTTP API endpoint
 
 
@@ -323,7 +326,8 @@ class WorkspaceRemoteClient:
         if self.config.mode == "http" and self.config.runpod_http_url:
             try:
                 import requests
-                response = requests.post(f"{self.config.runpod_http_url}/api/pull", json={"name": model}, timeout=300)
+                pull_timeout = 600 if is_codespaces else 300  # 10 min for Codespaces, 5 min otherwise
+                response = requests.post(f"{self.config.runpod_http_url}/api/pull", json={"name": model}, timeout=pull_timeout)
                 if response.status_code == 200:
                     return f"{model} pulled successfully on RunPod."
                 else:
@@ -333,11 +337,12 @@ class WorkspaceRemoteClient:
 
         # SSH method for other providers
         max_retries = 3
+        pull_ssh_timeout = 600 if is_codespaces else self.config.timeout_seconds  # 10 min for Codespaces, default otherwise
         for attempt in range(max_retries):
             result = self._ssh(
                 self.config.ssh_target or "",
                 f"ollama pull {shlex.quote(model)}",
-                timeout=self.config.timeout_seconds
+                timeout=pull_ssh_timeout
             )
             output = (result.stdout + result.stderr).strip()
 
@@ -360,7 +365,8 @@ class WorkspaceRemoteClient:
         if self.config.mode == "http" and self.config.runpod_http_url:
             try:
                 import requests
-                response = requests.get(f"{self.config.runpod_http_url}/api/tags", timeout=30)
+                list_timeout = 60 if is_codespaces else 30  # 1 min for Codespaces, 30s otherwise
+                response = requests.get(f"{self.config.runpod_http_url}/api/tags", timeout=list_timeout)
                 if response.status_code == 200:
                     data = response.json()
                     models = data.get("models", [])
@@ -371,7 +377,8 @@ class WorkspaceRemoteClient:
 
         # SSH method for other providers
         script = "import json, ollama; print(json.dumps(ollama.list(), default=lambda o: getattr(o, '__dict__', str(o))))"
-        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=100)
+        list_ssh_timeout = 180 if is_codespaces else 100  # 3 min for Codespaces, 100s otherwise
+        result = self._ssh(self.config.ssh_target or "", f"{self.config.python} -c {shlex.quote(script)}", timeout=list_ssh_timeout)
         if result.returncode != 0 or not result.stdout.strip():
             return []
         try:
@@ -446,13 +453,14 @@ class WorkspaceRemoteClient:
         remote_dir = self._remote_shell_path(self.config.remote_agent_dir)
         tar_cmd = "tar -czf - " + " ".join(shlex.quote(name) for name in existing)
         remote_cmd = f"mkdir -p {remote_dir} && tar -xzf - -C {remote_dir}"
+        sync_timeout = 28800 if is_codespaces else 14400  # 8 hours for Codespaces, 4 hours otherwise
         result = subprocess.run(
             f"{tar_cmd} | ssh {shlex.quote(self.config.ssh_target or '')} {shlex.quote(remote_cmd)}",
             cwd=package_root,
             shell=True,
             text=True,
             capture_output=True,
-            timeout=14400,
+            timeout=sync_timeout,
         )
         if result.returncode != 0:
             return (result.stderr or result.stdout or "copy failed").strip()
@@ -473,19 +481,23 @@ class WorkspaceRemoteClient:
             f"{shlex.quote(self.config.python)} -m pip install --user -r requirements.txt "
             f">/tmp/claw-coder-pip.log 2>&1"
         )
-        pip_result = self._ssh(target, pip_cmd, timeout=300)
+        pip_timeout = 600 if is_codespaces else 300  # 10 min for Codespaces, 5 min otherwise
+        pip_result = self._ssh(target, pip_cmd, timeout=pip_timeout)
         pip_status = "ok" if pip_result.returncode == 0 else "pip install failed, see /tmp/claw-coder-pip.log on remote"
 
         # 2. Ollama binary
-        has_ollama = self._ssh(target, "command -v ollama >/dev/null && printf yes || printf no", timeout=100)
+        ollama_check_timeout = 180 if is_codespaces else 100  # 3 min for Codespaces, 100s otherwise
+        has_ollama = self._ssh(target, "command -v ollama >/dev/null && printf yes || printf no", timeout=ollama_check_timeout)
         if has_ollama.stdout.strip() != "yes":
             status("Installing Ollama on the remote...")
-            install = self._ssh(target, "curl -fsSL https://ollama.com/install.sh | sh", timeout=100)
+            ollama_install_timeout = 180 if is_codespaces else 100  # 3 min for Codespaces, 100s otherwise
+            install = self._ssh(target, "curl -fsSL https://ollama.com/install.sh | sh", timeout=ollama_install_timeout)
             if install.returncode != 0:
                 return f"deps: {pip_status}; ollama install failed: {(install.stderr or install.stdout)[-500:].strip()}"
 
         # 3. Ollama daemon running?
-        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=50)
+        ollama_running_timeout = 90 if is_codespaces else 50  # 90s for Codespaces, 50s otherwise
+        is_running = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=ollama_running_timeout)
         if is_running.stdout.strip() != "yes":
             status("Starting ollama serve on the remote...")
             
@@ -495,24 +507,34 @@ class WorkspaceRemoteClient:
             self._ssh(target, sleep_cmd, timeout=30)
             
             # Start ollama serve with robust process management and resource constraints
+            load_retry = "20" if is_codespaces else "10"
+            load_timeout = "20m" if is_codespaces else "10m"
+            request_timeout = "20m" if is_codespaces else "10m"
+            max_queue = "1024" if is_codespaces else "512"
+            
             start_cmd = (
-                "OLLAMA_KEEP_ALIVE=-1 "
-                "OLLAMA_NUM_LOAD_RETRY=10 "
-                "OLLAMA_LOAD_TIMEOUT=10m "
-                "OLLAMA_MAX_QUEUE=512 "
-                "OLLAMA_NUM_PARALLEL=1 "
-                "nohup ollama serve > /tmp/ollama.log 2>&1 "
-                "</dev/null & echo $! > /tmp/ollama.pid; disown %1 2>/dev/null || true"
+                f"OLLAMA_KEEP_ALIVE=-1 "
+                f"OLLAMA_NUM_LOAD_RETRY={load_retry} "
+                f"OLLAMA_LOAD_TIMEOUT={load_timeout} "
+                f"OLLAMA_REQUEST_TIMEOUT={request_timeout} "
+                f"OLLAMA_MAX_QUEUE={max_queue} "
+                f"OLLAMA_NUM_PARALLEL=1 "
+                f"OLLAMA_HOST=0.0.0.0 "
+                f"OLLAMA_ORIGINS=* "
+                f"nohup ollama serve > /tmp/ollama.log 2>&1 "
+                f"</dev/null & echo $! > /tmp/ollama.pid; disown %1 2>/dev/null || true"
             )
-            self._ssh(target, start_cmd, timeout=100)
+            self._ssh(target, start_cmd, timeout=180)  # 3 min for starting ollama
             
             # Wait longer for ollama to fully initialize
             self._ssh(target, "sleep 5", timeout=30)
 
             # Re-verify instead of assuming success — this is the actual fix.
-            recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=60)
+            recheck_timeout = 120 if is_codespaces else 60  # 2 min for Codespaces, 1 min otherwise
+            recheck = self._ssh(target, "ollama list >/dev/null 2>&1 && printf yes || printf no", timeout=recheck_timeout)
             if recheck.stdout.strip() != "yes":
-                log_tail = self._ssh(target, "tail -n 50 /tmp/ollama.log 2>/dev/null", timeout=100)
+                log_tail_timeout = 180 if is_codespaces else 100  # 3 min for Codespaces, 100s otherwise
+                log_tail = self._ssh(target, "tail -n 50 /tmp/ollama.log 2>/dev/null", timeout=log_tail_timeout)
                 return (
                     f"deps: {pip_status}; ollama FAILED to start. Log tail:\n"
                     f"{(log_tail.stdout or log_tail.stderr or 'no log available').strip()}"
@@ -816,7 +838,8 @@ class WorkspaceRemoteClient:
         command = str(tool_input.get("command", "")).strip()
         if not command:
             return json.dumps({"status": "error", "error": "Missing command"})
-        timeout = int(tool_input.get("timeout", 300))
+        default_timeout = 600 if is_codespaces else 300  # 10 min for Codespaces, 5 min otherwise
+        timeout = int(tool_input.get("timeout", default_timeout))
         remote_command = f"cd {shlex.quote(self.config.remote_dir)} && {command}"
         try:
             result = self._ssh(self.config.ssh_target or "", remote_command, timeout=max(1, timeout))
@@ -852,11 +875,12 @@ class WorkspaceRemoteClient:
 
     @staticmethod
     def _ssh(target: str, command: str, timeout: int) -> subprocess.CompletedProcess[str]:
+        connect_timeout = 120 if is_codespaces else 60  # 2 min for Codespaces, 1 min otherwise
         return subprocess.run(
             [
                 "ssh",
                 "-o", "BatchMode=yes",  # fail immediately instead of prompting for a password
-                "-o", "ConnectTimeout=60",  # increased from 40 to 60 for slower connections
+                "-o", f"ConnectTimeout={connect_timeout}",  # longer timeout for Codespaces
                 "-o", "ServerAliveInterval=30",  # keep connection alive
                 "-o", "ServerAliveCountMax=3",  # allow some missed keepalives
                 target,
