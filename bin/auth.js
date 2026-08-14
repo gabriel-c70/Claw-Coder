@@ -88,10 +88,20 @@ function markNewVersionLoginComplete() {
 function getApiUrl() {
   return process.env.RATE_LIMIT_API_URL || "https://claw-coder-3.onrender.com";
 }
-
-async function logErrorToSupabase(error: string, context: any = {}) {
+function getDeviceId() {
+  const idFile = path.join(SESSION_DIR, "device_id");
   try {
-    const { supabaseUrl, anonKey } = getSupabaseConfig();
+    return fs.readFileSync(idFile, "utf8").trim();
+  } catch {
+    const id = require("node:crypto").randomUUID();
+    fs.mkdirSync(path.dirname(idFile), { recursive: true });
+    fs.writeFileSync(idFile, id, "utf8");
+    return id;
+  }
+}
+async function logErrorToSupabase(error, context = {}) {
+  try {
+    const { url: supabaseUrl, anonKey } = getSupabaseConfig();
     await fetch(`${supabaseUrl}/rest/v1/error_logs`, {
       method: "POST",
       headers: {
