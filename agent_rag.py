@@ -172,6 +172,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(message)s",
     handlers=[logging.FileHandler("agent_rag.log")],
+    force=True  # Ensure this configuration overrides any previous logging setup
 )
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)

@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { login, loadSession, clearSession, hasCompletedNewVersionLogin } = require("./auth");
-const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "qwen3-embedding:4b", "translategemma:4b"]
+const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "qwen3-embedding:4b"]
 
 const packageRoot = path.resolve(__dirname, "..");
 const pythonAgent = path.join(packageRoot, "agent_rag.py");
@@ -74,6 +74,7 @@ const HELP = `
 ║  login [provider]              Log in via OAuth (default: github)            ║
 ║  logout                        Clear saved session                           ║
 ║  whoami                        Show current logged-in user                   ║
+║  clear-storage                 Clear all Claw-Coder local storage           ║
 ║  usage                        Show this month's cloud tool usage             ║
 ║  credits                      Show paid credit balance                       ║
 ║  upgrade-plan                 Subscribe to available plans                   ║
@@ -1538,6 +1539,61 @@ async function main() {
   }
 
 
+  if (command === "clear-storage") {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    
+    const sessionDir = path.join(os.homedir(), ".claw-coder");
+    const sessionFile = path.join(sessionDir, "session.json");
+    const newVersionLoginFile = path.join(sessionDir, "new_version_login_complete");
+    const telemetryFile = path.join(sessionDir, "telemetry_consent.json");
+    const updateCheckFile = path.join(sessionDir, "update_check.json");
+    const deviceIdFile = path.join(sessionDir, "device_id");
+    
+    console.log("\n┌─────────────────────────────────────────┐");
+    console.log("│     Clearing Claw-Coder Storage              │");
+    console.log("├─────────────────────────────────────────┤");
+    
+    let clearedCount = 0;
+    
+    if (fs.existsSync(sessionFile)) {
+      fs.unlinkSync(sessionFile);
+      console.log("│  ✓ Session data cleared                   │");
+      clearedCount++;
+    }
+    
+    if (fs.existsSync(newVersionLoginFile)) {
+      fs.unlinkSync(newVersionLoginFile);
+      console.log("│  ✓ New version login flag cleared          │");
+      clearedCount++;
+    }
+    
+    if (fs.existsSync(telemetryFile)) {
+      fs.unlinkSync(telemetryFile);
+      console.log("│  ✓ Telemetry consent cleared               │");
+      clearedCount++;
+    }
+    
+    if (fs.existsSync(updateCheckFile)) {
+      fs.unlinkSync(updateCheckFile);
+      console.log("│  ✓ Update check data cleared               │");
+      clearedCount++;
+    }
+    
+    if (fs.existsSync(deviceIdFile)) {
+      fs.unlinkSync(deviceIdFile);
+      console.log("│  ✓ Device ID cleared                       │");
+      clearedCount++;
+    }
+    
+    console.log("├─────────────────────────────────────────┤");
+    console.log(`│  Total items cleared: ${clearedCount}                │`);
+    console.log("└─────────────────────────────────────────┘\n");
+    console.log("You'll need to login again: claw-coder login");
+    return;
+  }
+
   if (command === "topup") {
     let session;
     try {
@@ -1588,7 +1644,7 @@ async function main() {
 
 // ── AUTH GATE ──────────────────────────────────────────────
 // skip auth for setup/doctor/help (they don't touch the agent)
-  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models", "telemetry", "claw-coder"]);
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models", "telemetry", "claw-coder", "clear-storage"]);
   if (!NO_AUTH_COMMANDS.has(command)) {
     const session = loadSession();
   if (!session) {

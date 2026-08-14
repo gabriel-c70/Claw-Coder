@@ -6,6 +6,10 @@ the terminal UI and auth local while chat, model pulls, and coding tools run on
 the user's Codespace over SSH.
 """
 
+import sys
+import io
+from contextlib import redirect_stdout
+
 from __future__ import annotations
 
 import base64
@@ -49,7 +53,7 @@ agent = Agent(
     embedding_model=payload.get("embedding_model") or os.getenv("CLAW_EMBEDDING_MODEL", "qwen3-embedding:4b"),
     workspace_mode="local",
 )
-print(agent.execute_tool(payload["tool_name"], payload.get("tool_input") or {}))
+print(agent.execute_tool(payload["tool_name"], payload.get("tool_input") or {}), file=sys.stderr)
 """
 
 REMOTE_CHAT_SCRIPT = r"""
@@ -91,23 +95,23 @@ for attempt in range(max_retries):
                     if hasattr(chunk.message, 'content'):
                         content = chunk.message.content
                         full_response["message"]["content"] += content
-                        # Stream the content as JSON chunks
+                        # Stream the content as JSON chunks to stderr to avoid chat pollution
                         if content:
-                            print(json.dumps({"chunk": content}, ensure_ascii=False), flush=True)
+                            print(json.dumps({"chunk": content}, ensure_ascii=False), flush=True, file=sys.stderr)
                     if hasattr(chunk.message, 'tool_calls') and chunk.message.tool_calls:
                         full_response["message"]["tool_calls"] = chunk.message.tool_calls
                 elif isinstance(chunk, dict):
                     if chunk.get("message", {}).get("content"):
                         content = chunk["message"]["content"]
                         full_response["message"]["content"] += content
-                        # Stream the content as JSON chunks
+                        # Stream the content as JSON chunks to stderr to avoid chat pollution
                         if content:
-                            print(json.dumps({"chunk": content}, ensure_ascii=False), flush=True)
+                            print(json.dumps({"chunk": content}, ensure_ascii=False), flush=True, file=sys.stderr)
                     if chunk.get("message", {}).get("tool_calls"):
                         full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
             
-            # Send final response
-            print(json.dumps({"final": full_response}, ensure_ascii=False), flush=True)
+            # Send final response to stderr to avoid chat pollution
+            print(json.dumps({"final": full_response}, ensure_ascii=False), flush=True, file=sys.stderr)
             response = full_response
         else:
             # Non-streaming mode (original behavior)
@@ -140,7 +144,7 @@ if hasattr(response, "model_dump"):
 
 # Only print the final response if not in streaming mode (streaming mode already printed it)
 if not use_streaming:
-    print(json.dumps(response, ensure_ascii=False, default=lambda o: getattr(o, "__dict__", str(o))))
+    print(json.dumps(response, ensure_ascii=False, default=lambda o: getattr(o, "__dict__", str(o))), file=sys.stderr)
 """
 
 

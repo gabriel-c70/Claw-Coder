@@ -89,6 +89,28 @@ function getApiUrl() {
   return process.env.RATE_LIMIT_API_URL || "https://claw-coder-3.onrender.com";
 }
 
+async function logErrorToSupabase(error: string, context: any = {}) {
+  try {
+    const { supabaseUrl, anonKey } = getSupabaseConfig();
+    await fetch(`${supabaseUrl}/rest/v1/error_logs`, {
+      method: "POST",
+      headers: {
+        "apikey": anonKey,
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${anonKey}`,
+      },
+      body: JSON.stringify({
+        error: error,
+        context: context,
+        timestamp: new Date().toISOString(),
+        device_id: getDeviceId(),
+      }),
+    });
+  } catch (e) {
+    // Silent fail - don't break auth if error logging fails
+  }
+}
+
 async function login() {
   const { url: supabaseUrl, anonKey, serviceKey, githubClientId } = getSupabaseConfig();
 
@@ -213,8 +235,10 @@ async function login() {
   }),
 });
   if (!authRes.ok) {
-    throw new Error(`Server auth failed: ${await authRes.text()}`);
-}
+    const errorText = await authRes.text();
+    await logErrorToSupabase(`Server auth failed: ${errorText}`, { endpoint: "github-callback" });
+    throw new Error(`Server auth failed: ${errorText}`);
+  }
   const supabaseData = await authRes.json();
 
     const accessToken = supabaseData?.access_token || tokenData.access_token;
