@@ -1193,14 +1193,28 @@ async function main() {
     console.log(`  Run \`claw upgrade\` to update.\n`);
   }
 
-  if (!command || command === "--help" || command === "-h" || command === "help") {
+  // Handle help commands
+  if (command === "--help" || command === "-h" || command === "help") {
     printHelp();
     return;
   }
   
-  // Handle claw-coder help
-  if (command === "claw-coder" && (commandArgs[0] === "--help" || commandArgs[0] === "-h" || commandArgs[0] === "help")) {
+  // Handle claw-coder help specifically
+  if (command === "claw-coder" && commandArgs.length > 0 && (commandArgs[0] === "help" || commandArgs[0] === "--help" || commandArgs[0] === "-h")) {
     printHelp();
+    return;
+  }
+  
+  // If no command provided, default to chat UI
+  if (!command) {
+    ensureOllamaReadyForChat();
+    const globalOptions = collectGlobalOptions(args);
+    const chatArgs = ["chat", ...collectDocumentOptions(args)];
+    const uiOption = readOption(args, ["--ui"]);
+    if (uiOption) {
+      chatArgs.push("--ui", uiOption);
+    }
+    runAgent([...globalOptions, ...chatArgs]);
     return;
   }
   if (command === "--version" || command === "-v") {
@@ -1539,7 +1553,7 @@ async function main() {
 
 // ── AUTH GATE ──────────────────────────────────────────────
 // skip auth for setup/doctor/help (they don't touch the agent)
-  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models", "telemetry"]);
+  const NO_AUTH_COMMANDS = new Set(["setup", "doctor", "help", "--help", "-h", "login", "logout", "whoami", "--version", "-v", "usage", "credits", "buy", "topup", "models", "telemetry", "claw-coder"]);
   if (!NO_AUTH_COMMANDS.has(command)) {
     const session = loadSession();
   if (!session) {
@@ -1563,9 +1577,22 @@ async function main() {
   process.env.CLAW_USER_ID    = session.user?.id    || "";
 }
 // ──────────────────────────────────────────────────────────
+  // Handle claw-coder command to launch chat UI
+  if (command === "claw-coder") {
+    ensureOllamaReadyForChat();
+    const globalOptions = collectGlobalOptions(commandArgs);
+    const chatArgs = ["chat", ...collectDocumentOptions(commandArgs)];
+    const uiOption = readOption(commandArgs, ["--ui"]);
+    if (uiOption) {
+      chatArgs.push("--ui", uiOption);
+    }
+    runAgent([...globalOptions, ...chatArgs]);
+    return;
+  }
+
   // ← KNOWN_COMMANDS must be INSIDE main() so command is defined
   const KNOWN_COMMANDS = new Set([
-    "claw-coder", "models", "ingest", "ingest-code", "ingest-pdf", "search",
+    "models", "ingest", "ingest-code", "ingest-pdf", "search",
     "graph", "summary", "graph-summary", "languages",
     "setup", "doctor", "raw", "embedding","usage", "credits", "upgrade-plan", "topup",
     "telemetry"
