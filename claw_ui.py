@@ -12,6 +12,8 @@ import time
 import math
 import logging
 import json
+import platform
+import subprocess
 import urllib.request
 import urllib.error
 import ssl
@@ -25,6 +27,7 @@ try:
     from rich.prompt import Prompt
     from rich.spinner import Spinner
     from rich.status import Status
+    from rich.syntax import Syntax
     from rich.table import Table
     from rich.text import Text
 
@@ -33,6 +36,22 @@ except ImportError:
     RICH_AVAILABLE = False
 
 DEFAULT_TAB_PREFIX = "Claw-Coder"
+_DISPLAY_MODE = "detailed"
+_INPUT_SESSION: Any = None
+
+
+def set_display_mode(mode: str) -> str:
+    """Set the terminal density for the current chat session."""
+    global _DISPLAY_MODE
+    cleaned = mode.strip().lower()
+    if cleaned not in {"compact", "detailed"}:
+        raise ValueError("Display mode must be 'compact' or 'detailed'.")
+    _DISPLAY_MODE = cleaned
+    return _DISPLAY_MODE
+
+
+def get_display_mode() -> str:
+    return _DISPLAY_MODE
 
 
 def _console() -> "Console":
@@ -55,6 +74,190 @@ def set_terminal_title(title: str) -> None:
     for sequence in (f"\033]0;{clean}\007", f"\033]2;{clean}\007"):
         sys.stdout.write(sequence)
     sys.stdout.flush()
+
+
+def format_session_status(
+    model: str,
+    embedding_model: str,
+    workspace_mode: str,
+    message_count: int,
+    plan_count: int,
+    context_window: int,
+) -> None:
+    """Show local model, service, and session health without changing state."""
+    ollama_state = "unavailable"
+    model_count = "—"
+    try:
+        models = list_ollama_models()
+        ollama_state = "healthy"
+        model_count = str(len(models))
+    except Exception:
+        pass
+
+    memory = "—"
+    try:
+        import psutil
+        memory = f"{psutil.virtual_memory().available // (1024 * 1024)} MB free"
+    except Exception:
+        pass
+
+    rows = [
+        ("Chat model", model),
+        ("Embedding model", embedding_model),
+        ("Context window", f"{context_window:,} tokens"),
+        ("Workspace", workspace_mode),
+        ("Ollama", f"{ollama_state} · {model_count} local model(s)"),
+        ("Memory", memory),
+        ("Conversation", f"{message_count} message(s) · {plan_count} plan step(s)"),
+        ("Display", get_display_mode()),
+    ]
+    if not RICH_AVAILABLE:
+        print("\n".join(f"{label}: {value}" for label, value in rows))
+        return
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", justify="right")
+    table.add_column()
+    for label, value in rows:
+        style = "green" if label == "Ollama" and ollama_state == "healthy" else "red" if label == "Ollama" else "white"
+        table.add_row(label, Text(value, style=style))
+    _console().print(Panel(table, title="[bold]Session status[/bold]", border_style="cyan"))
+
+
+def print_plan_progress(plan: Sequence[Dict[str, Any]]) -> None:
+    """Show a small progress panel after the agent creates or updates a plan."""
+    if not plan:
+        return
+    symbols = {"completed": "✓", "in_progress": "●", "pending": "○"}
+    if not RICH_AVAILABLE:
+        for item in plan:
+            state = str(item.get("status", "pending"))
+            print(f"{symbols.get(state, '○')} {item.get('step', '')}")
+        return
+    table = Table.grid(padding=(0, 1))
+    for item in plan:
+        state = str(item.get("status", "pending"))
+        color = {"completed": "green", "in_progress": "yellow"}.get(state, "dim")
+        table.add_row(Text(symbols.get(state, "○"), style=color), Text(str(item.get("step", ""))))
+    _console().print(Panel(table, title="[bold]Plan progress[/bold]", border_style="cyan"))
+
+
+def describe_tool_action(tool_name: str, arguments: Dict[str, Any]) -> str:
+    """Return a useful, short progress label without exposing full arguments."""
+    labels = {
+        "search_knowledge_base": "Searching indexed project knowledge",
+        "search_knowledge_graph": "Tracing code relationships",
+        "search_code": "Searching repository files",
+        "run_terminal": "Running a terminal command",
+        "run_tests": "Running tests",
+        "read_files": "Reading files",
+        "edit_file": "Editing a file",
+        "apply_patch": "Applying a patch",
+        "manage_plan": "Updating the plan",
+        "search_stuff": "Searching current information",
+        "ingest_paths_knowledge": "Indexing project files",
+    }
+    label = labels.get(tool_name, tool_name.replace("_", " ").capitalize())
+    target = arguments.get("path") or arguments.get("query") or arguments.get("command")
+    if target:
+        clean_target = " ".join(str(target).split())
+        return f"{label}: {clean_target[:72]}"
+    return label
+
+
+def print_recovery_guidance(error: str) -> None:
+    """Show actionable recovery steps for common local-service failures."""
+    lowered = error.lower()
+    if not any(word in lowered for word in ("ollama", "connection", "terminated", "refused")):
+        print_error(error)
+        return
+    guidance = (
+        f"{error}\n\n"
+        "Recovery: run `/status`. Claw-Coder will try to restart Ollama automatically; "
+        "if it remains unavailable, run `ollama serve` in another terminal and retry. "
+        "On a small Codespace, use a smaller model or wait for memory to be released."
+    )
+    if RICH_AVAILABLE:
+        _console().print(Panel(guidance, title="[bold red]Ollama needs attention[/bold red]", border_style="red"))
+    else:
+        print(guidance)
+
+
+def copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Copy text when a platform clipboard program is available."""
+    if not text:
+        return False, "There is no assistant response to copy yet."
+    commands = (["pbcopy"], ["clip"]) if platform.system() == "Windows" else (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"])
+    for command in commands:
+        try:
+            subprocess.run(command, input=text, text=True, check=True, capture_output=True)
+            return True, "Copied the latest response to your clipboard."
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return False, "Clipboard integration is unavailable here. Select the rendered code block and copy it from the terminal."
+
+
+def language_for_path(path: str) -> str:
+    """Infer a Rich lexer name from a file path for edit previews."""
+    extension = Path(path).suffix.lower()
+    return {
+        ".py": "python", ".js": "javascript", ".jsx": "jsx", ".ts": "typescript",
+        ".tsx": "tsx", ".json": "json", ".md": "markdown", ".html": "html",
+        ".css": "css", ".scss": "scss", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
+        ".toml": "toml", ".xml": "xml", ".java": "java", ".go": "go", ".rs": "rust",
+        ".sql": "sql", ".rb": "ruby", ".php": "php", ".c": "c", ".cpp": "cpp",
+    }.get(extension, "text")
+
+
+def render_edit_preview(tool_name: str, arguments: Dict[str, Any]) -> None:
+    """Render the proposed write before an edit tool is executed."""
+    if not RICH_AVAILABLE or tool_name not in {"edit_file", "apply_patch", "create_file", "gnu_patch", "git_apply_patch"}:
+        return
+    path = str(arguments.get("path") or arguments.get("file_path") or "workspace")
+    content = str(arguments.get("patch") or arguments.get("content") or arguments.get("target") or "")
+    if not content:
+        _console().print(f"[yellow]Preparing {tool_name.replace('_', ' ')} for {path}[/yellow]")
+        return
+    max_preview = 8000
+    if len(content) > max_preview:
+        content = content[:max_preview] + "\n… preview truncated …"
+    language = "diff" if tool_name in {"apply_patch", "gnu_patch", "git_apply_patch"} else language_for_path(path)
+    syntax = Syntax(content, language, theme="monokai", line_numbers=True, word_wrap=True)
+    _console().print(
+        Panel(
+            syntax,
+            title=f"[bold yellow]Proposed {tool_name.replace('_', ' ')}[/bold yellow] · {path}",
+            subtitle=Text(language, style="bold cyan"),
+            subtitle_align="right",
+            border_style="yellow",
+        )
+    )
+
+
+def render_markdown_response(text: str) -> None:
+    """Render prose plus fenced code blocks, with the language shown at bottom-right."""
+    if not RICH_AVAILABLE or "```" not in text:
+        if RICH_AVAILABLE:
+            _console().print(Markdown(text, code_theme="monokai"))
+        else:
+            print(text)
+        return
+
+    parts = re.split(r"```([A-Za-z0-9_+.-]*)\n?([\s\S]*?)```", text)
+    for index in range(0, len(parts), 3):
+        prose = parts[index].strip()
+        if prose:
+            _console().print(Markdown(prose, code_theme="monokai"))
+        if index + 2 < len(parts):
+            language = parts[index + 1].strip() or "text"
+            code = parts[index + 2].strip("\n")
+            _console().print(
+                Panel(
+                    Syntax(code, language, theme="monokai", line_numbers=True, word_wrap=True),
+                    subtitle=Text(language, style="bold cyan"),
+                    subtitle_align="right",
+                    border_style="bright_black",
+                )
+            )
 
 
 def conversation_title_from_message(message: str, max_len: int = 40) -> str:
@@ -470,6 +673,10 @@ def print_banner(model: str, embedding_model: str) -> None:
     if not RICH_AVAILABLE:
         print(f"Claw-Coder — model: {model} | embeddings: {embedding_model}")
         return
+    if get_display_mode() == "compact":
+        _console().print(f"[bold cyan]Claw-Coder[/bold cyan]  [dim]chat {model} · embed {embedding_model}[/dim]")
+        _console().print("[dim]Commands: /help · /status · /display detailed[/dim]")
+        return
     os.system("clear")
     # Show simple welcome box
     show_simple_welcome_box()
@@ -478,7 +685,7 @@ def print_banner(model: str, embedding_model: str) -> None:
     body.append("OpenMindedAI's Claw Coder\n", style="bold cyan")
     body.append(f"chat  {model}\n", style="white")
     body.append(f"embed {embedding_model}\n", style="dim")
-    body.append("\nCommands: /models /pdf <file> /help /title  exit\n", style="dim italic")
+    body.append("\nCommands: /help /status /models /copy /display <compact|detailed>  exit\n", style="dim italic")
     _console().print(Panel(body, border_style="cyan", padding=(1, 2)))
 
 
@@ -511,34 +718,37 @@ def read_user_input() -> str:
 
 
 def read_multiline_input() -> str:
-    """Read multi-line input with visual editing using prompt_toolkit."""
+    """Read input with persistent history; Enter sends and Alt+Enter adds a line."""
     try:
-        from prompt_toolkit import prompt
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.keys import Keys
         from prompt_toolkit.shortcuts import PromptSession
-        from prompt_toolkit.layout import Layout
-        from prompt_toolkit.layout.containers import Window
-        from prompt_toolkit.layout.controls import FormattedTextControl
-        from prompt_toolkit.layout.dimension import D
-        from prompt_toolkit.filters import Condition
+        from prompt_toolkit.history import FileHistory
         
         # Custom key bindings
         kb = KeyBindings()
         
         @kb.add(Keys.Enter)
         def _(event):
-            """Accept input on Enter."""
+            """Send input on Enter."""
             event.app.exit(result=event.app.current_buffer.text)
+
+        @kb.add(Keys.Escape, Keys.Enter)
+        def _(event):
+            """Insert a newline with Alt+Enter."""
+            event.app.current_buffer.insert_text("\n")
         
-        # Use PromptSession for multi-line editing
-        session = PromptSession(key_bindings=kb)
+        global _INPUT_SESSION
+        if _INPUT_SESSION is None:
+            history_path = Path.home() / ".claw-coder" / "chat_history"
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            _INPUT_SESSION = PromptSession(key_bindings=kb, history=FileHistory(str(history_path)))
         
-        # Get user input with multi-line support
-        result = session.prompt(
+        result = _INPUT_SESSION.prompt(
             '❭ ',
             multiline=True,
             enable_suspend=True,
+            bottom_toolbar="Enter send · Alt+Enter newline · ↑/↓ history · /help commands",
         )
         
         return result.strip()
@@ -625,7 +835,9 @@ def print_assistant_response(text: str) -> None:
     if not text:
         return
     if RICH_AVAILABLE:
-        _console().print(Markdown(text))
+        render_markdown_response(text)
+        if "```" in text:
+            _console().print("[dim]Tip: use /copy to copy this response, or select a code block in the terminal.[/dim]")
     else:
         print(text)
 
@@ -785,10 +997,14 @@ class ToolStatusDisplay:
         self._current_tool: Optional[str] = None
         self._status: Optional[Status] = None
         self._console = _console() if RICH_AVAILABLE else None
+        self._started_at: Optional[float] = None
         
-    def start_tool(self, tool_name: str, description: str = "") -> None:
+    def start_tool(self, tool_name: str, description: str = "", arguments: Optional[Dict[str, Any]] = None) -> None:
         """Start displaying status for a tool execution."""
         self._current_tool = tool_name
+        self._started_at = time.perf_counter()
+        if arguments:
+            render_edit_preview(tool_name, arguments)
         if self._console and RICH_AVAILABLE:
             label = f"[bold blue]Running:[/bold blue] {tool_name}"
             if description:
@@ -814,20 +1030,23 @@ class ToolStatusDisplay:
             self._status.__exit__(None, None, None)
             self._status = None
         
+        elapsed = time.perf_counter() - self._started_at if self._started_at else 0.0
+        duration = f" [dim]({elapsed:.1f}s)[/dim]"
         if self._console and RICH_AVAILABLE:
             if success:
-                self._console.print(f"[green]✓[/green] {self._current_tool}")
+                self._console.print(f"[green]✓[/green] {self._current_tool}{duration}")
             else:
-                self._console.print(f"[red]✗[/red] {self._current_tool}")
-            if result:
+                self._console.print(f"[red]✗[/red] {self._current_tool}{duration}")
+            if result and get_display_mode() == "detailed":
                 self._console.print(f"[dim]{result}[/dim]")
         elif not RICH_AVAILABLE:
             status = "✓" if success else "✗"
-            print(f"{status} {self._current_tool}")
-            if result:
+            print(f"{status} {self._current_tool} ({elapsed:.1f}s)")
+            if result and get_display_mode() == "detailed":
                 print(f"  {result}")
         
         self._current_tool = None
+        self._started_at = None
         
     def __enter__(self) -> "ToolStatusDisplay":
         return self

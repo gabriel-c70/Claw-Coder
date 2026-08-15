@@ -56,6 +56,10 @@ from claw_ui import (
     ChatSpinner,
     ToolStatusDisplay,
     conversation_title_from_message,
+    copy_to_clipboard,
+    describe_tool_action,
+    format_session_status,
+    get_display_mode,
     list_ollama_models,
     print_assistant_response,
     print_assistant_start,
@@ -64,9 +68,12 @@ from claw_ui import (
     print_models_table,
     prompt_workspace_target,
     print_status,
+    print_plan_progress,
+    print_recovery_guidance,
     print_user_prompt,
     read_user_input,
     read_multiline_input,
+    set_display_mode,
     open_editor_for_input,
     resolve_chat_model,
     set_terminal_title,
@@ -3350,7 +3357,11 @@ class Agent:
                     
                     # Show tool status
                     if tool_status_display:
-                        tool_status_display.start_tool(tool_name)
+                        tool_status_display.start_tool(
+                            tool_name,
+                            describe_tool_action(tool_name, tool_args),
+                            tool_args,
+                        )
                     
                     result = self.execute_tool(tool_name, tool_args)
                     
@@ -3365,6 +3376,14 @@ class Agent:
                     # Complete tool status
                     if tool_status_display:
                         tool_status_display.complete_tool(success, result[:200] if len(result) > 200 else result)
+
+                    if tool_name == "manage_plan":
+                        try:
+                            plan = result_data.get("plan", [])
+                            if isinstance(plan, list):
+                                print_plan_progress(plan)
+                        except (AttributeError, UnboundLocalError):
+                            pass
                     
                     tool_events.append({"tool": tool_name, "status": tool_status})
                     self.messages.append({"role": "tool", "content": result})
@@ -3495,6 +3514,7 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
         ingest_session_documents(agent, docs)
 
     session_title_set = False
+    last_response = ""
     try:
         while True:
             # Use multi-line input for better editing experience
@@ -3516,11 +3536,43 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                         • /workspace pull <model> - Pull model on remote
                         • /pdf <file> - Load PDF document
                         • /title - Set conversation title
+                        • /status - Show model, Ollama, workspace, context, and memory health
+                        • /display <compact|detailed> - Change terminal density
+                        • /copy - Copy the latest assistant response
+                        • Enter sends · Alt+Enter adds a line · Up/Down recalls history
                         • exit or quit - Quit application
                         • Ctrl+C - Cancel input
                     """
 
                 print_status(help_text)
+                continue
+
+            if user_input.lower() == "/status":
+                format_session_status(
+                    model=agent.model,
+                    embedding_model=agent.embedding_model,
+                    workspace_mode=agent.workspace_mode,
+                    message_count=len(agent.messages) - 1,
+                    plan_count=len(agent.plan),
+                    context_window=3072 if is_codespaces else 4096,
+                )
+                continue
+
+            if user_input.lower().startswith("/display"):
+                parts = user_input.split(maxsplit=1)
+                if len(parts) == 1:
+                    print_status(f"Display mode: {get_display_mode()}. Use /display compact or /display detailed.")
+                    continue
+                try:
+                    mode = set_display_mode(parts[1])
+                    print_status(f"Display mode changed to {mode}.")
+                except ValueError as exc:
+                    print_error(str(exc))
+                continue
+
+            if user_input.lower() == "/copy":
+                copied, message = copy_to_clipboard(last_response)
+                (print_status if copied else print_error)(message)
                 continue
             
             if user_input.lower() == "/models":
@@ -3618,23 +3670,29 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             # Streaming callback function
             full_streamed_content = []
             def stream_callback(content):
-                # Stream content as it arrives for better UX
+                # Keep the response until completion so fenced code can be
+                # syntax highlighted with its language badge. File-edit previews
+                # still render live when the agent calls a write tool.
                 full_streamed_content.append(content)
-                if RICH_AVAILABLE:
-                    _console().print(content, end="")
-                else:
-                    print(content, end="", flush=True)
             
             with ChatSpinner(random.choice(REASONING_WORDS)):
                 response = agent.chat(user_input, tool_status_display=tool_display, stream_callback=stream_callback)
             
-            # If streaming happened, add newline and continue
+            # Render the completed response once, including copy-friendly code blocks.
             if full_streamed_content:
-                if RICH_AVAILABLE:
-                    _console().print()  # Add newline after streaming
+                last_response = response or "".join(full_streamed_content)
+                if last_response:
+                    if any(keyword in last_response.lower() for keyword in ("ollama service", "connection error", "connection refused", "terminated")):
+                        print_recovery_guidance(last_response)
+                    else:
+                        print_assistant_response(last_response)
             # If streaming didn't happen (fallback), print the full response
             elif response:
-                print_assistant_response(response)
+                last_response = response
+                if any(keyword in response.lower() for keyword in ("ollama service", "connection error", "connection refused", "terminated")):
+                    print_recovery_guidance(response)
+                else:
+                    print_assistant_response(response)
     except KeyboardInterrupt:
         pass
     finally:
