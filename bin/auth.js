@@ -6,7 +6,10 @@ const path = require("node:path");
 
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
-const NEW_VERSION_LOGIN_FILE = path.join(SESSION_DIR, "new_version_login_complete");
+// Increment this whenever a release must re-authenticate every installed CLI.
+// The old marker did not contain a version, so it could only force login once.
+const REQUIRED_LOGIN_VERSION = 2;
+const LOGIN_VERSION_FILE = path.join(SESSION_DIR, "login_version");
 
 const BAKED_CONFIG = {
   supabaseUrl:    "https://nqbrdafvdfntxvhbyama.supabase.co",
@@ -72,17 +75,21 @@ function loadSession() {
 
 function clearSession() {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-  if (fs.existsSync(NEW_VERSION_LOGIN_FILE)) fs.unlinkSync(NEW_VERSION_LOGIN_FILE);
+  if (fs.existsSync(LOGIN_VERSION_FILE)) fs.unlinkSync(LOGIN_VERSION_FILE);
 }
 
 function hasCompletedNewVersionLogin() {
-  return fs.existsSync(NEW_VERSION_LOGIN_FILE);
+  try {
+    return Number.parseInt(fs.readFileSync(LOGIN_VERSION_FILE, "utf8"), 10) >= REQUIRED_LOGIN_VERSION;
+  } catch {
+    return false;
+  }
 }
 
 function markNewVersionLoginComplete() {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
-  fs.writeFileSync(NEW_VERSION_LOGIN_FILE, Date.now().toString(), "utf8");
-  try { fs.chmodSync(NEW_VERSION_LOGIN_FILE, 0o600); } catch {}
+  fs.writeFileSync(LOGIN_VERSION_FILE, String(REQUIRED_LOGIN_VERSION), "utf8");
+  try { fs.chmodSync(LOGIN_VERSION_FILE, 0o600); } catch {}
 }
 
 function getApiUrl() {
@@ -216,16 +223,29 @@ async function login() {
     const githubUserRes = await fetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: "application/json" },
     });
+    if (!githubUserRes.ok) {
+      throw new Error(`Could not fetch GitHub profile (${githubUserRes.status}).`);
+    }
     const githubUser = await githubUserRes.json();
 
     const githubEmailRes = await fetch("https://api.github.com/user/emails", {
       headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: "application/json" },
     });
+    if (!githubEmailRes.ok) {
+      throw new Error(
+        `Could not fetch your GitHub email (${githubEmailRes.status}). ` +
+        "Please re-authorize and allow the user:email scope."
+      );
+    }
     const githubEmails = await githubEmailRes.json();
-    const primaryEmail = githubEmails.find(e => e.primary)?.email || githubUser.email;
+    if (!Array.isArray(githubEmails)) {
+      throw new Error("GitHub returned an invalid email response. Please try logging in again.");
+    }
+    const primaryEmail = githubEmails.find(e => e.primary && e.verified)?.email
+      || githubEmails.find(e => e.verified)?.email;
 
     if (!primaryEmail) {
-      throw new Error("Could not get email from GitHub. Make sure your account has a primary email.");
+      throw new Error("Could not get a verified email from GitHub. Verify an email address, then try again.");
     }
 
     console.log(`✓ Welcome, ${githubUser.login}!`);
@@ -238,7 +258,6 @@ async function login() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             github_token: tokenData.access_token,
-            email: primaryEmail,
             github_id: String(githubUser.id),
             github_login: githubUser.login,
             avatar_url: githubUser.avatar_url,

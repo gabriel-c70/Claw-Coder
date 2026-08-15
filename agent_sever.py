@@ -788,31 +788,43 @@ def upsert_supabase_user(
         "Authorization": f"Bearer {service_key}",
     }
 
-    # 1. Check if a Supabase user with this email already exists
+    # Check for an existing account by its stable GitHub ID first. Email addresses
+    # can change, while the GitHub ID cannot. The Auth admin endpoint is paginated;
+    # requesting a large page prevents normal projects from missing an existing user.
     list_res = requests.get(
         f"{supabase_url}/auth/v1/admin/users",
         headers=headers,
-        params={"email": email},
+        params={"page": 1, "per_page": 1000},
         timeout=10,
     )
 
     if list_res.status_code == 200:
         existing_users = list_res.json().get("users", [])
-        existing = next((u for u in existing_users if u.get("email") == email), None)
+        existing = next(
+            (
+                user for user in existing_users
+                if str((user.get("user_metadata") or {}).get("github_id")) == github_id
+            ),
+            None,
+        )
+        # Retain compatibility with users created before github_id was stored.
+        existing = existing or next(
+            (user for user in existing_users if user.get("email", "").lower() == email.lower()),
+            None,
+        )
         if existing:
-            sign_in_res = requests.post(
-                f"{supabase_url}/auth/v1/admin/users/{existing['id']}/session",
-                headers={**headers, "Content-Type": "application/json"},
-                timeout=10,
-            )
-            if sign_in_res.status_code == 200:
-                sign_in_data = sign_in_res.json()
-                return {
-                    "supabase_user_id": existing["id"],
-                    "access_token": sign_in_data.get("access_token"),
-                    "refresh_token": sign_in_data.get("refresh_token"),
-                    "expires_at": sign_in_data.get("expires_at"),
-                }
+            # Keep the stored email current when the GitHub account's primary email
+            # changes. Auth's admin "session" URL is not a supported GoTrue API, so
+            # the CLI continues using the already-verified GitHub token here.
+            if existing.get("email", "").lower() != email.lower():
+                update_res = requests.put(
+                    f"{supabase_url}/auth/v1/admin/users/{existing['id']}",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={"email": email, "email_confirm": True},
+                    timeout=10,
+                )
+                if update_res.status_code != 200:
+                    print(f"Warning: could not update Supabase email: {update_res.text}")
             return {"supabase_user_id": existing["id"]}
 
     # 2. No existing user — create one
@@ -842,26 +854,10 @@ def upsert_supabase_user(
 
     new_user = create_res.json()
 
-    session_res = requests.post(
-        f"{supabase_url}/auth/v1/admin/users/{new_user['id']}/session",
-        headers={**headers, "Content-Type": "application/json"},
-        timeout=10,
-    )
-
-    if session_res.status_code == 200:
-        session_data = session_res.json()
-        return {
-            "supabase_user_id": new_user["id"],
-            "access_token": session_data.get("access_token"),
-            "refresh_token": session_data.get("refresh_token"),
-            "expires_at": session_data.get("expires_at"),
-        }
-
     return {"supabase_user_id": new_user["id"]}
 
 class GithubAuthPayload(BaseModel):
     github_token: str
-    email: str
     github_id: str
     github_login: str
     avatar_url: str | None = None
@@ -879,9 +875,31 @@ def github_callback(payload: GithubAuthPayload):
     if verify.status_code != 200 or str(verify.json().get("id")) != payload.github_id:
         raise HTTPException(status_code=401, detail="Invalid or mismatched GitHub token")
 
+    # Do not trust an email supplied by the CLI. GitHub's email endpoint is the
+    # source of truth and also tells us whether the address has been verified.
+    emails_res = requests.get(
+        "https://api.github.com/user/emails",
+        headers={"Authorization": f"Bearer {payload.github_token}", "Accept": "application/json"},
+        timeout=10,
+    )
+    if emails_res.status_code != 200:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not retrieve a GitHub email. Re-authorize with the user:email scope.",
+        )
+    emails = emails_res.json()
+    if not isinstance(emails, list):
+        raise HTTPException(status_code=422, detail="GitHub returned an invalid email response")
+    verified_emails = [entry for entry in emails if entry.get("verified") and entry.get("email")]
+    email_entry = next((entry for entry in verified_emails if entry.get("primary")), None)
+    email_entry = email_entry or (verified_emails[0] if verified_emails else None)
+    if not email_entry:
+        raise HTTPException(status_code=422, detail="Your GitHub account has no verified email address")
+    email = str(email_entry["email"]).strip().lower()
+
     service_key = os.environ["SUPABASE_SERVICE_KEY"]  # only ever lives here, server-side
     session = upsert_supabase_user(
-        SUPABASE_URL, service_key, payload.email,
+        SUPABASE_URL, service_key, email,
         payload.github_id, payload.github_login, payload.avatar_url,
     )
     if not session:
@@ -1085,4 +1103,3 @@ def payment_success():
       </body>
     </html>
     """
-

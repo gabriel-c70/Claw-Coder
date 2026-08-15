@@ -1546,7 +1546,7 @@ async function main() {
     
     const sessionDir = path.join(os.homedir(), ".claw-coder");
     const sessionFile = path.join(sessionDir, "session.json");
-    const newVersionLoginFile = path.join(sessionDir, "new_version_login_complete");
+    const loginVersionFile = path.join(sessionDir, "login_version");
     const telemetryFile = path.join(sessionDir, "telemetry_consent.json");
     const updateCheckFile = path.join(sessionDir, "update_check.json");
     const deviceIdFile = path.join(sessionDir, "device_id");
@@ -1563,9 +1563,9 @@ async function main() {
       clearedCount++;
     }
     
-    if (fs.existsSync(newVersionLoginFile)) {
-      fs.unlinkSync(newVersionLoginFile);
-      console.log("│  ✓ New version login flag cleared          │");
+    if (fs.existsSync(loginVersionFile)) {
+      fs.unlinkSync(loginVersionFile);
+      console.log("│  ✓ Login version flag cleared              │");
       clearedCount++;
     }
     
