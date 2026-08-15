@@ -49,7 +49,7 @@ from agent_rag import Agent
 
 agent = Agent(
     model=payload.get("model") or os.getenv("CLAW_MODEL") or os.getenv("OLLAMA_MODEL") or "llama3.2:1b",
-    embedding_model=payload.get("embedding_model") or os.getenv("CLAW_EMBEDDING_MODEL", "qwen3-embedding:4b"),
+    embedding_model=payload.get("embedding_model") or os.getenv("CLAW_EMBEDDING_MODEL", "nomic-embed-text"),
     workspace_mode="local",
 )
 print(agent.execute_tool(payload["tool_name"], payload.get("tool_input") or {}), file=sys.stderr)
@@ -504,26 +504,22 @@ class WorkspaceRemoteClient:
         if is_running.stdout.strip() != "yes":
             status("Starting ollama serve on the remote...")
             
-            # Kill any existing ollama processes to prevent conflicts
-            self._ssh(target, "pkill -f 'ollama serve' || true", timeout=30)
-            sleep_cmd = "sleep 2"
-            self._ssh(target, sleep_cmd, timeout=30)
-            
-            # Start ollama serve with robust process management and resource constraints
+            # Do not kill a daemon that may belong to another terminal/session.
+            # Start a single detached daemon only after the health check failed.
             load_retry = "20" if is_codespaces else "10"
             load_timeout = "20m" if is_codespaces else "10m"
             request_timeout = "20m" if is_codespaces else "10m"
-            max_queue = "1024" if is_codespaces else "512"
+            max_queue = "4" if is_codespaces else "64"
             
             start_cmd = (
-                f"OLLAMA_KEEP_ALIVE=-1 "
+                f"OLLAMA_KEEP_ALIVE=5m "
                 f"OLLAMA_NUM_LOAD_RETRY={load_retry} "
                 f"OLLAMA_LOAD_TIMEOUT={load_timeout} "
                 f"OLLAMA_REQUEST_TIMEOUT={request_timeout} "
                 f"OLLAMA_MAX_QUEUE={max_queue} "
+                f"OLLAMA_MAX_LOADED_MODELS=1 "
                 f"OLLAMA_NUM_PARALLEL=1 "
-                f"OLLAMA_HOST=0.0.0.0 "
-                f"OLLAMA_ORIGINS=* "
+                f"OLLAMA_HOST=127.0.0.1 "
                 f"nohup ollama serve > /tmp/ollama.log 2>&1 "
                 f"</dev/null & echo $! > /tmp/ollama.pid; disown %1 2>/dev/null || true"
             )

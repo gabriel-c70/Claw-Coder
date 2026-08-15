@@ -11,7 +11,7 @@ Setup:
     pip install tree-sitter-javascript tree-sitter-typescript tree-sitter-json
     pip install tree-sitter-html tree-sitter-css tree-sitter-java tree-sitter-go tree-sitter-rust
     ollama serve
-    ollama pull qwen3-embedding:4b
+    ollama pull nomic-embed-text
     ollama pull granite4.1:8b
 
 Examples:
@@ -148,25 +148,46 @@ def optimize_for_codespaces():
     available_memory = get_system_memory()
     logging.info(f"Available memory: {available_memory} MB")
     
-    # Set environment variables based on available memory
+    # Keep the server's working set small. Codespaces can reclaim the Ollama
+    # process when a chat model and a large embedding model remain loaded.
     if available_memory < 4096:  # Less than 4GB
         os.environ['OLLAMA_NUM_PARALLEL'] = '1'
-        os.environ['OLLAMA_MAX_QUEUE'] = '256'
+        os.environ['OLLAMA_MAX_QUEUE'] = '2'
         os.environ['OLLAMA_LOAD_TIMEOUT'] = '30m'
         os.environ['OLLAMA_REQUEST_TIMEOUT'] = '30m'
         logging.info("Applied low-memory configuration")
     elif available_memory < 8192:  # Less than 8GB
         os.environ['OLLAMA_NUM_PARALLEL'] = '1'
-        os.environ['OLLAMA_MAX_QUEUE'] = '512'
+        os.environ['OLLAMA_MAX_QUEUE'] = '4'
         os.environ['OLLAMA_LOAD_TIMEOUT'] = '20m'
         os.environ['OLLAMA_REQUEST_TIMEOUT'] = '20m'
         logging.info("Applied medium-memory configuration")
     else:
         os.environ['OLLAMA_NUM_PARALLEL'] = '1'
-        os.environ['OLLAMA_MAX_QUEUE'] = '1024'
+        os.environ['OLLAMA_MAX_QUEUE'] = '8'
         os.environ['OLLAMA_LOAD_TIMEOUT'] = '10m'
         os.environ['OLLAMA_REQUEST_TIMEOUT'] = '10m'
         logging.info("Applied high-memory configuration")
+    os.environ.setdefault('OLLAMA_KEEP_ALIVE', '5m')
+    os.environ.setdefault('OLLAMA_MAX_LOADED_MODELS', '1')
+
+
+def ollama_server_env() -> Dict[str, str]:
+    """Return conservative daemon settings, especially for Codespaces."""
+    env = os.environ.copy()
+    env.update({
+        'OLLAMA_KEEP_ALIVE': env.get('OLLAMA_KEEP_ALIVE', '5m' if is_codespaces else '30m'),
+        'OLLAMA_NUM_LOAD_RETRY': env.get('OLLAMA_NUM_LOAD_RETRY', '20' if is_codespaces else '10'),
+        'OLLAMA_LOAD_TIMEOUT': env.get('OLLAMA_LOAD_TIMEOUT', '20m' if is_codespaces else '10m'),
+        'OLLAMA_REQUEST_TIMEOUT': env.get('OLLAMA_REQUEST_TIMEOUT', '20m' if is_codespaces else '10m'),
+        'OLLAMA_MAX_QUEUE': env.get('OLLAMA_MAX_QUEUE', '4' if is_codespaces else '64'),
+        'OLLAMA_MAX_LOADED_MODELS': env.get('OLLAMA_MAX_LOADED_MODELS', '1'),
+        'OLLAMA_NUM_PARALLEL': env.get('OLLAMA_NUM_PARALLEL', '1'),
+        'OLLAMA_HOST': env.get('OLLAMA_HOST', '127.0.0.1'),
+    })
+    if is_codespaces:
+        env.setdefault('OLLAMA_LLM_LIBRARY', 'cpu')
+    return env
 
 logging.basicConfig(
     level=logging.INFO,
@@ -179,7 +200,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 DEFAULT_CHAT_MODEL = ""
-DEFAULT_EMBEDDING_MODEL = os.getenv("CLAW_EMBEDDING_MODEL", "qwen3-embedding:4b")
+DEFAULT_EMBEDDING_MODEL = os.getenv("CLAW_EMBEDDING_MODEL", "nomic-embed-text")
 DEFAULT_DB_PATH = "agent_rag_chroma_db"
 DEFAULT_COLLECTION = "agent_mixed_knowledge"
 DEFAULT_KNOWLEDGE_GRAPH_PATH = DEFAULT_GRAPH_PATH
@@ -326,30 +347,7 @@ def ensure_ollama_running() -> bool:
             import platform
             import os
             
-            # Set environment variables for better stability in resource-constrained environments
-            env = os.environ.copy()
-            env.update({
-                'OLLAMA_KEEP_ALIVE': '-1',  # Keep models loaded indefinitely
-                'OLLAMA_NUM_LOAD_RETRY': '20' if is_codespaces else '10',  # More retries in Codespaces
-                'OLLAMA_LOAD_TIMEOUT': '20m' if is_codespaces else '10m',  # Longer timeout in Codespaces
-                'OLLAMA_REQUEST_TIMEOUT': '20m' if is_codespaces else '10m',  # Longer timeout in Codespaces
-                'OLLAMA_MAX_QUEUE': '1024' if is_codespaces else '512',  # Larger queue in Codespaces
-                'OLLAMA_NUM_PARALLEL': '1',  # Keep single parallel for stability
-                'OLLAMA_HOST': '0.0.0.0' if is_codespaces else '127.0.0.1',  # Listen on all interfaces for Codespaces
-                'OLLAMA_ORIGINS': '*' if is_codespaces else '',  # Allow all origins for Codespaces
-            })
-            
-            # Add Codespaces-specific memory optimizations
-            if is_codespaces:
-                env.update({
-                    'OLLAMA_DEBUG': '1',  # Enable debug logging for troubleshooting
-                    'OLLAMA_LLM_LIBRARY': 'cpu',  # Force CPU usage in Codespaces
-                    'OLLAMA_GPU_LAYERS': '0',  # Disable GPU layers in Codespaces (save memory)
-                    'OLLAMA_F16KV': '1',  # Use half-precision KV cache (save memory)
-                })
-            
-            # Clear any stale PID file
-            clear_ollama_pid()
+            env = ollama_server_env()
             
             if platform.system() == "Windows":
                 # Windows: use start command to run in background
@@ -363,9 +361,10 @@ def ensure_ollama_running() -> bool:
                 save_ollama_pid(proc.pid)
                 logging.info(f"Ollama started with PID: {proc.pid}")
             else:
-                # Unix-like: use nohup to run in background
+                # A new session detaches from the terminal. Do not use `nohup`
+                # as the executable: it can mask an immediate server failure.
                 proc = subprocess.Popen(
-                    ["nohup", "ollama", "serve"],
+                    ["ollama", "serve"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
@@ -400,7 +399,7 @@ def ensure_ollama_running() -> bool:
                             )
                         else:
                             restart_proc = subprocess.Popen(
-                                ["nohup", "ollama", "serve"],
+                                ["ollama", "serve"],
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                                 start_new_session=True,
@@ -926,10 +925,9 @@ class Agent:
     @staticmethod
     def build_system_prompt() -> str:
         from system_prompt import system_prompt_for_claw_coder
-        path = Path(__file__).parent / "claw_coder_system_prompt"  # ← removed the double prefix
-        if not path.exists():
-            return system_prompt_for_claw_coder() # fallback if file missing
-        return path.read_text(encoding="utf-8")
+        # Keep the runtime prompt compact. Small local models lose useful code
+        # context when the system prompt consumes most of their context window.
+        return system_prompt_for_claw_coder()
 
     def load_memory(self) -> List[Dict[str, Any]]:
         if not self.memory_path.exists():
@@ -3260,7 +3258,7 @@ class Agent:
                         tools=self.tools,
                         stream=True,
                         options={
-                            "num_ctx": 4096,
+                            "num_ctx": 3072 if is_codespaces else 4096,
                             "temperature": 0.7,
                             "timeout": 600  # 10 minute timeout
                         }
@@ -3292,7 +3290,7 @@ class Agent:
                         tools=self.tools,
                         stream=False,
                         options={
-                            "num_ctx": 4096,
+                            "num_ctx": 3072 if is_codespaces else 4096,
                             "temperature": 0.7,
                             "timeout": 600  # 10 minute timeout
                         }

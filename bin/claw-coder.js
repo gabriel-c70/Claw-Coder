@@ -6,7 +6,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { login, loadSession, clearSession, hasCompletedNewVersionLogin } = require("./auth");
-const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "qwen3-embedding:4b"]
+// qwen3-embedding:4b is a large model for the smallest Codespaces machines.
+// A compact embedding model leaves enough memory for the chat model as well.
+const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "nomic-embed-text"]
 
 const packageRoot = path.resolve(__dirname, "..");
 const pythonAgent = path.join(packageRoot, "agent_rag.py");
@@ -957,40 +959,29 @@ function startOllamaServe() {
     return false;
   }
   
-  // Kill any existing ollama serve processes to prevent conflicts
-  console.log("Ensuring clean ollama startup...");
-  clearOllamaPid(); // Clear any stale PID file
-  
-  if (process.platform === "win32") {
-    run("taskkill", ["/F", "/IM", "ollama.exe"], { stdio: "pipe" });
-  } else {
-    run("pkill", ["-f", "ollama serve"], { stdio: "pipe" });
-  }
-  sleepSync(2000);
-  
   console.log("Initializing 🦙  ollama in the unseen......");
   
   // Configure environment for better stability in resource-constrained environments
   const ollamaEnv = {
     ...process.env,
     // Basic stability settings
-    OLLAMA_KEEP_ALIVE: "-1",
+    // Codespaces has a fixed memory budget. Keeping every model forever and
+    // accepting a huge queue makes the kernel OOM-kill Ollama under load.
+    OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || (isCodespaces() ? "5m" : "30m"),
     OLLAMA_NUM_LOAD_RETRY: isCodespaces() ? "20" : "10", // More retries in Codespaces
     OLLAMA_LOAD_TIMEOUT: isCodespaces() ? "20m" : "10m", // Longer timeout in Codespaces
     OLLAMA_REQUEST_TIMEOUT: isCodespaces() ? "20m" : "10m", // Longer timeout in Codespaces
-    OLLAMA_MAX_QUEUE: isCodespaces() ? "1024" : "512", // Larger queue in Codespaces
+    OLLAMA_MAX_QUEUE: process.env.OLLAMA_MAX_QUEUE || (isCodespaces() ? "4" : "64"),
+    OLLAMA_MAX_LOADED_MODELS: process.env.OLLAMA_MAX_LOADED_MODELS || "1",
     OLLAMA_NUM_PARALLEL: "1", // Keep single parallel for stability
     
     // Codespaces-specific network settings
-    OLLAMA_HOST: isCodespaces() ? "0.0.0.0" : "127.0.0.1", // Listen on all interfaces for Codespaces
-    OLLAMA_ORIGINS: isCodespaces() ? "*" : "", // Allow all origins for Codespaces
+    OLLAMA_HOST: process.env.OLLAMA_HOST || "127.0.0.1",
+    OLLAMA_ORIGINS: process.env.OLLAMA_ORIGINS || "",
     
     // Memory and resource management for Codespaces
     ...(isCodespaces() ? {
-      OLLAMA_DEBUG: "1", // Enable debug logging for troubleshooting
       OLLAMA_LLM_LIBRARY: "cpu", // Force CPU usage in Codespaces
-      OLLAMA_GPU_LAYERS: "0", // Disable GPU layers in Codespaces (save memory)
-      OLLAMA_F16KV: "1", // Use half-precision KV cache (save memory)
     } : {}),
   };
   
