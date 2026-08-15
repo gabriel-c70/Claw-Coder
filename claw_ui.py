@@ -36,8 +36,119 @@ except ImportError:
     RICH_AVAILABLE = False
 
 DEFAULT_TAB_PREFIX = "Claw-Coder"
+CLAW_CONFIG_DIR = Path.home() / ".claw-coder"
+TRUSTED_WORKSPACES_PATH = CLAW_CONFIG_DIR / "trusted_workspaces.json"
 _DISPLAY_MODE = "detailed"
 _INPUT_SESSION: Any = None
+
+
+def normalize_workspace_path(path: Optional[str | Path] = None) -> str:
+    """Resolve a workspace path to a stable absolute string for trust checks."""
+    target = Path(path or Path.cwd()).expanduser()
+    try:
+        return str(target.resolve())
+    except OSError:
+        return str(target.absolute())
+
+
+def load_trusted_workspaces() -> List[str]:
+    if not TRUSTED_WORKSPACES_PATH.exists():
+        return []
+    try:
+        data = json.loads(TRUSTED_WORKSPACES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(data, dict):
+        entries = data.get("trusted", [])
+    elif isinstance(data, list):
+        entries = data
+    else:
+        return []
+    return sorted({normalize_workspace_path(entry) for entry in entries if entry})
+
+
+def save_trusted_workspaces(paths: Sequence[str]) -> None:
+    CLAW_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    normalized = sorted({normalize_workspace_path(path) for path in paths if path})
+    TRUSTED_WORKSPACES_PATH.write_text(
+        json.dumps({"trusted": normalized}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def is_workspace_trusted(path: Optional[str | Path] = None) -> bool:
+    """True when path matches a trusted folder or is nested under one."""
+    target = normalize_workspace_path(path)
+    for trusted in load_trusted_workspaces():
+        if target == trusted or target.startswith(trusted + os.sep):
+            return True
+    return False
+
+
+def trust_workspace(path: Optional[str | Path] = None) -> str:
+    target = normalize_workspace_path(path)
+    trusted = load_trusted_workspaces()
+    if target not in trusted:
+        trusted.append(target)
+        save_trusted_workspaces(trusted)
+    return target
+
+
+def untrust_workspace(path: Optional[str | Path] = None) -> str:
+    target = normalize_workspace_path(path)
+    trusted = [entry for entry in load_trusted_workspaces() if entry != target]
+    # Also drop nested trust entries under this folder.
+    trusted = [
+        entry
+        for entry in trusted
+        if not (entry == target or entry.startswith(target + os.sep))
+    ]
+    save_trusted_workspaces(trusted)
+    return target
+
+
+def prompt_workspace_trust(path: Optional[str | Path] = None) -> bool:
+    """
+    Cursor-style trust prompt. Returns True when the user trusts the folder.
+    """
+    target = normalize_workspace_path(path)
+    if RICH_AVAILABLE:
+        body = Text()
+        body.append("Do you trust the authors of the files in this folder?\n\n", style="bold")
+        body.append(f"{target}\n\n", style="cyan")
+        body.append(
+            "Claw-Coder can read, edit, run terminal commands, and execute code "
+            "in Docker for this folder. Only trust workspaces you trust.\n\n",
+            style="dim",
+        )
+        body.append("Restricted mode keeps read-only tools available.\n", style="dim")
+        _console().print(Panel(body, title="[bold]Workspace Trust[/bold]", border_style="yellow", padding=(1, 2)))
+        answer = Prompt.ask(
+            "[bold yellow]Trust this workspace?[/bold yellow]",
+            choices=["y", "n"],
+            default="n",
+        ).strip().lower()
+    else:
+        print("\nWorkspace Trust")
+        print(f"Folder: {target}")
+        print("Claw-Coder can read, edit, run commands, and use Docker here.")
+        print("Only trust folders you trust. Restricted mode stays read-only for writes/exec.")
+        answer = input("Trust this workspace? [y/N]: ").strip().lower()
+    if answer in {"y", "yes"}:
+        trust_workspace(target)
+        print_status(f"Trusted workspace: {target}")
+        return True
+    print_status("Restricted mode: run /trust when you want full tool access.")
+    return False
+
+
+def ensure_workspace_trust(path: Optional[str | Path] = None, *, prompt: bool = True) -> bool:
+    """Return trust state, optionally prompting once when the folder is new."""
+    if is_workspace_trusted(path):
+        return True
+    if not prompt:
+        return False
+    return prompt_workspace_trust(path)
 
 
 def set_display_mode(mode: str) -> str:
@@ -56,7 +167,7 @@ def get_display_mode() -> str:
 
 def _console() -> "Console":
     if not RICH_AVAILABLE:
-        raise RuntimeError("rich is not installed. Run: claw setup")
+        raise RuntimeError("rich is not installed. Run: claw-coder setup")
     return Console(highlight=False)
 def print_print_goodbye():
     if RICH_AVAILABLE:
@@ -83,6 +194,9 @@ def format_session_status(
     message_count: int,
     plan_count: int,
     context_window: int,
+    image_model: Optional[str] = None,
+    workspace_path: Optional[str] = None,
+    workspace_trusted: Optional[bool] = None,
 ) -> None:
     """Show local model, service, and session health without changing state."""
     ollama_state = "unavailable"
@@ -101,11 +215,16 @@ def format_session_status(
     except Exception:
         pass
 
+    folder = normalize_workspace_path(workspace_path)
+    trusted = is_workspace_trusted(folder) if workspace_trusted is None else workspace_trusted
     rows = [
         ("Chat model", model),
         ("Embedding model", embedding_model),
+        ("Image model", image_model or "—"),
         ("Context window", f"{context_window:,} tokens"),
         ("Workspace", workspace_mode),
+        ("Folder", folder),
+        ("Trust", "trusted" if trusted else "restricted"),
         ("Ollama", f"{ollama_state} · {model_count} local model(s)"),
         ("Memory", memory),
         ("Conversation", f"{message_count} message(s) · {plan_count} plan step(s)"),
@@ -669,13 +788,34 @@ def show_simple_welcome_box():
     _console().print(f"[bold cyan]{box}[/bold cyan]")
     _console().print()
 
-def print_banner(model: str, embedding_model: str) -> None:
+def print_banner(
+    model: str,
+    embedding_model: str,
+    image_model: Optional[str] = None,
+    workspace_trusted: Optional[bool] = None,
+) -> None:
+    trust_label = None
+    if workspace_trusted is not None:
+        trust_label = "trusted" if workspace_trusted else "restricted"
     if not RICH_AVAILABLE:
-        print(f"Claw-Coder — model: {model} | embeddings: {embedding_model}")
+        parts = [f"Claw-Coder — model: {model} | embeddings: {embedding_model}"]
+        if image_model:
+            parts.append(f" | image: {image_model}")
+        if trust_label:
+            parts.append(f" | trust: {trust_label}")
+        print("".join(parts))
         return
     if get_display_mode() == "compact":
-        _console().print(f"[bold cyan]Claw-Coder[/bold cyan]  [dim]chat {model} · embed {embedding_model}[/dim]")
-        _console().print("[dim]Commands: /help · /status · /display detailed[/dim]")
+        extras = []
+        if image_model:
+            extras.append(f"image {image_model}")
+        if trust_label:
+            extras.append(trust_label)
+        extra = (" · " + " · ".join(extras)) if extras else ""
+        _console().print(
+            f"[bold cyan]Claw-Coder[/bold cyan]  [dim]chat {model} · embed {embedding_model}{extra}[/dim]"
+        )
+        _console().print("[dim]Commands: /help · /status · /trust · /display detailed[/dim]")
         return
     os.system("clear")
     # Show simple welcome box
@@ -685,7 +825,11 @@ def print_banner(model: str, embedding_model: str) -> None:
     body.append("OpenMindedAI's Claw Coder\n", style="bold cyan")
     body.append(f"chat  {model}\n", style="white")
     body.append(f"embed {embedding_model}\n", style="dim")
-    body.append("\nCommands: /help /status /models /copy /display <compact|detailed>  exit\n", style="dim italic")
+    if image_model:
+        body.append(f"image {image_model}\n", style="dim")
+    if trust_label:
+        body.append(f"trust {trust_label}\n", style="yellow" if trust_label == "restricted" else "green")
+    body.append("\nCommands: /help /status /trust /models /image-model /copy /display  exit\n", style="dim italic")
     _console().print(Panel(body, border_style="cyan", padding=(1, 2)))
 
 
@@ -960,9 +1104,9 @@ def ask_user_selection(question: str, options: List[str], default_index: int = 0
 def print_print_goodbye() -> None:
     set_terminal_title(DEFAULT_TAB_PREFIX)
     if RICH_AVAILABLE:
-        _console().print("\n[dim]Goodbye — run `claw chat` anytime.[/dim]\n")
+        _console().print("\n[dim]Goodbye — run `claw-coder` anytime.[/dim]\n")
     else:
-        print("\nGoodbye — run `claw chat` anytime.\n")
+        print("\nGoodbye — run `claw-coder` anytime.\n")
 
 
 class ChatSpinner:

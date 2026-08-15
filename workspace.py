@@ -50,7 +50,9 @@ from agent_rag import Agent
 agent = Agent(
     model=payload.get("model") or os.getenv("CLAW_MODEL") or os.getenv("OLLAMA_MODEL") or "llama3.2:1b",
     embedding_model=payload.get("embedding_model") or os.getenv("CLAW_EMBEDDING_MODEL", "nomic-embed-text"),
+    image_model=payload.get("image_model") or os.getenv("CLAW_IMAGE_MODEL", "translategemma:4b"),
     workspace_mode="local",
+    workspace_trusted=True,
 )
 print(agent.execute_tool(payload["tool_name"], payload.get("tool_input") or {}), file=sys.stderr)
 """
@@ -426,7 +428,7 @@ class WorkspaceRemoteClient:
             output = self._remote_python(REMOTE_CHAT_SCRIPT, payload)
             return json.loads(output)
 
-    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any], model: str = "", embedding_model: str = "") -> str:
+    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any], model: str = "", embedding_model: str = "", image_model: str = "") -> str:
         if not self.active:
             return json.dumps({"status": "error", "error": "Workspace is not connected"})
         if tool_name == "run_terminal":
@@ -438,6 +440,7 @@ class WorkspaceRemoteClient:
             "agent_dir": self.config.remote_agent_dir,
             "model": model,
             "embedding_model": embedding_model,
+            "image_model": image_model,
         }
         return self._remote_python(REMOTE_TOOL_SCRIPT, payload)
 

@@ -58,9 +58,12 @@ from claw_ui import (
     conversation_title_from_message,
     copy_to_clipboard,
     describe_tool_action,
+    ensure_workspace_trust,
     format_session_status,
     get_display_mode,
+    is_workspace_trusted,
     list_ollama_models,
+    normalize_workspace_path,
     print_assistant_response,
     print_assistant_start,
     print_banner,
@@ -77,6 +80,8 @@ from claw_ui import (
     open_editor_for_input,
     resolve_chat_model,
     set_terminal_title,
+    trust_workspace,
+    untrust_workspace,
     validate_ollama_model,
     print_print_goodbye,
     RICH_AVAILABLE,
@@ -208,6 +213,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 DEFAULT_CHAT_MODEL = ""
 DEFAULT_EMBEDDING_MODEL = os.getenv("CLAW_EMBEDDING_MODEL", "nomic-embed-text")
+DEFAULT_IMAGE_MODEL = os.getenv("CLAW_IMAGE_MODEL", "translategemma:4b")
 DEFAULT_DB_PATH = "agent_rag_chroma_db"
 DEFAULT_COLLECTION = "agent_mixed_knowledge"
 DEFAULT_KNOWLEDGE_GRAPH_PATH = DEFAULT_GRAPH_PATH
@@ -880,10 +886,27 @@ class MixedRAGStore:
         ]
 
 class Agent:
+    # Tools that can change the machine or run untrusted code — require trust.
+    TRUST_REQUIRED_TOOLS: Set[str] = {
+        "run_terminal",
+        "edit_file",
+        "delete_file",
+        "create_file",
+        "apply_patch",
+        "gnu_patch",
+        "git_apply_patch",
+        "execute_code_in_docker",
+        "run_tests",
+        "ingest_code_knowledge",
+        "ingest_pdf_knowledge",
+        "ingest_paths_knowledge",
+    }
+
     def __init__(
         self,
         model: str = DEFAULT_CHAT_MODEL,
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+        image_model: str = DEFAULT_IMAGE_MODEL,
         max_steps: int = 8,
         rag_db_path: str = DEFAULT_DB_PATH,
         rag_collection: str = DEFAULT_COLLECTION,
@@ -892,9 +915,12 @@ class Agent:
         workspace_mode: str = "local",
         workspace_ssh: Optional[str] = None,
         workspace_remote_dir: str = "/workspaces",
+        workspace_root: Optional[str] = None,
+        workspace_trusted: Optional[bool] = None,
     ) -> None:
         self.model = model
         self.embedding_model = embedding_model
+        self.image_model = image_model or DEFAULT_IMAGE_MODEL
         self.max_steps = max_steps
         self.rag_db_path = rag_db_path
         self.rag_collection = rag_collection
@@ -904,6 +930,17 @@ class Agent:
         self._knowledge_graph: Optional[KnowledgeGraphStore] = None
         self.workspace_mode = workspace_mode
         self.workspace_remote_dir = workspace_remote_dir
+        self.workspace_root = normalize_workspace_path(workspace_root)
+        self._skip_trust_prompt = workspace_trusted is not None
+        self.workspace_trusted = (
+            bool(workspace_trusted)
+            if workspace_trusted is not None
+            else is_workspace_trusted(self.workspace_root)
+        )
+        if workspace_trusted is True:
+            trust_workspace(self.workspace_root)
+            self.workspace_trusted = True
+
         self.remote_workspace = None
         if WorkspaceConfig and WorkspaceRemoteClient:
             self.remote_workspace = WorkspaceRemoteClient(
@@ -1515,6 +1552,41 @@ class Agent:
             return str(exc)
         return f"Local model set to {self.model}."
 
+    def switch_image_model(self, model: str) -> str:
+        """Set the vision model used for HTML/CSS Docker screenshot analysis."""
+        model = model.strip()
+        if not model:
+            return f"Current image model: {self.image_model}"
+        if self.remote_workspace and self.remote_workspace.active:
+            pull_result = self.remote_workspace.pull_model(model)
+            if "Invalid model name" in pull_result or "Could not" in pull_result or "not connected" in pull_result:
+                return pull_result
+            self.image_model = model
+            return f"Remote image model set to {model}.\n{pull_result}"
+        try:
+            self.image_model = validate_ollama_model(model)
+        except ValueError as exc:
+            return str(exc)
+        return f"Image model set to {self.image_model}."
+
+    def trust_status(self) -> str:
+        state = "trusted" if self.workspace_trusted else "restricted"
+        return (
+            f"Folder: {self.workspace_root}\n"
+            f"Trust: {state}\n"
+            "Use /trust to enable write/terminal/docker tools, "
+            "or /trust revoke to return to restricted mode."
+        )
+
+    def set_workspace_trusted(self, trusted: bool = True) -> str:
+        if trusted:
+            trust_workspace(self.workspace_root)
+            self.workspace_trusted = True
+            return f"Trusted workspace: {self.workspace_root}"
+        untrust_workspace(self.workspace_root)
+        self.workspace_trusted = False
+        return f"Restricted mode for: {self.workspace_root}"
+
     @staticmethod
     def parse_tool_arguments(raw_args: Any) -> Dict[str, Any]:
         if isinstance(raw_args, dict):
@@ -1562,15 +1634,15 @@ class Agent:
 
         session_path = Path.home() / ".claw-coder" / "session.json"
         if not session_path.exists():
-            return "Not logged in. Run: claw login"
+            return "Not logged in. Run: claw-coder login"
 
         try:
             session = _json.loads(session_path.read_text(encoding="utf-8"))
             token = session.get("access_token", "")
             if not token:
-                return "Not logged in. Run: claw login"
+                return "Not logged in. Run: claw-coder login"
         except Exception:
-            return "Could not read your saved session. Run: claw login"
+            return "Could not read your saved session. Run: claw-coder login"
 
         payload = _json.dumps({"tool_name": tool_name}).encode("utf-8")
         request = _req.Request(
@@ -1610,7 +1682,7 @@ class Agent:
                 session_path = Path.home() / ".claw-coder" / "session.json"
                 if session_path.exists():
                     session_path.unlink()
-                return "Your session is invalid or expired. Exit and run `claw login` again."
+                return "Your session is invalid or expired. Exit and run `claw-coder login` again."
 
             if exc.code in {402, 429}:
                 try:
@@ -1620,7 +1692,7 @@ class Agent:
                     msg = f"Rate limit exceeded for {tool_name}"
                 return msg
             if exc.code == 401:
-                return "Session expired. Run: claw login"
+                return "Session expired. Run: claw-coder login"
             logging.warning("Rate limit server HTTP %s for %s", exc.code, tool_name)
             return (
                 f"Could not verify credits for {tool_name} because the billing server "
@@ -1640,6 +1712,19 @@ class Agent:
             if limit_error:
                 return json.dumps({"status": "error", "error": limit_error}, ensure_ascii=False)
             # ─
+
+            # ── workspace trust gate (Cursor-style restricted mode) ───
+            if tool_name in self.TRUST_REQUIRED_TOOLS and not self.workspace_trusted:
+                return json.dumps(
+                    {
+                        "status": "denied",
+                        "error": (
+                            f"Workspace is in restricted mode, so '{tool_name}' is blocked. "
+                            f"Run /trust to trust {self.workspace_root} like Cursor workspace trust."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
             
             # ── approval check for dangerous operations ─────────────────
             if hasattr(self, 'approval_callback'):
@@ -1677,6 +1762,7 @@ class Agent:
                     tool_input,
                     model=self.model,
                     embedding_model=self.embedding_model,
+                    image_model=self.image_model,
                 )
             if tool_name == "gnu_patch":
                 return self._gnu_patch_tool(tool_input)
@@ -2404,13 +2490,13 @@ class Agent:
         except Exception:
             return json.dumps({
                 "status": "error",
-                "error": "Not logged in. Run: claw login",
+                "error": "Not logged in. Run: claw-coder login",
             })
 
         if not token:
             return json.dumps({
                 "status": "error",
-                "error": "Not logged in. Run: claw login",
+                "error": "Not logged in. Run: claw-coder login",
             })
 
         payload = json.dumps({"query": query}).encode("utf-8")
@@ -2439,7 +2525,7 @@ class Agent:
                 session_path = Path.home() / ".claw-coder" / "session.json"
                 if session_path.exists():
                     session_path.unlink()
-                return "Your session is invalid or expired. Exit and run `claw login` again."
+                return "Your session is invalid or expired. Exit and run `claw-coder login` again."
 
             if exc.code == 429:
                 try:
@@ -2451,7 +2537,7 @@ class Agent:
             if exc.code == 401:
                 return json.dumps({
                     "status": "error",
-                    "error": "Session expired. Run: claw login",
+                    "error": "Session expired. Run: claw-coder login",
                 })
             return json.dumps({
                 "status": "error",
@@ -2560,8 +2646,20 @@ class Agent:
         if not command:
             return json.dumps({"status": "error", "error": "Missing command"})
         timeout = int(tool_input.get("timeout", 30))
-        if self.needs_confirmation(command) and not self.ask_user_confirmation(command):
-            return json.dumps({"status": "cancelled", "command": command})
+        # Trusted workspaces run without per-command prompts (Cursor-style).
+        # Restricted folders are blocked in execute_tool before this runs.
+        if not self.workspace_trusted:
+            return json.dumps(
+                {
+                    "status": "denied",
+                    "error": (
+                        f"Workspace is restricted. Run /trust to allow terminal "
+                        f"commands in {self.workspace_root}."
+                    ),
+                    "command": command,
+                },
+                ensure_ascii=False,
+            )
 
         result = self.run_terminal(command, timeout=timeout)
         status = "ok" if result["returncode"] == 0 else "error"
@@ -3024,7 +3122,17 @@ class Agent:
     def _analyze_screenshot(self, image_bytes: bytes, language: str) -> str:
         """Feed screenshot to a vision model and get a structured UI description."""
         import base64
-        vision_model = "translategemma:4b"
+        vision_model = self.image_model or DEFAULT_IMAGE_MODEL
+
+        # Ensure the vision model is available locally before analyzing.
+        try:
+            validate_ollama_model(vision_model)
+            vision_model = self.image_model = vision_model
+        except ValueError as exc:
+            return (
+                f"Vision model '{vision_model}' is unavailable: {exc}. "
+                f"Set one with /image-model <name> or CLAW_IMAGE_MODEL."
+            )
 
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         prompt = (
@@ -3051,7 +3159,7 @@ class Agent:
             )
             return response.get("message", {}).get("content", "Screenshot analysis unavailable.")
         except Exception as exc:
-            return f"Vision model error: {exc}"
+            return f"Vision model error ({vision_model}): {exc}"
     def execute_code_in_docker(self, code: str, language: str = "python", timeout: int = 10) -> Dict[str, Any]:
         if not code.strip():
             return {"error": "Missing code", "returncode": 2}
@@ -3200,13 +3308,13 @@ class Agent:
 
         session_path = Path.home() / ".claw-coder" / "session.json"
         if not session_path.exists():
-            return f"{feature_name} requires a paid plan. Run: claw login, then claw upgrade-plan"
+            return f"{feature_name} requires a paid plan. Run: claw-coder login, then claw-coder upgrade-plan"
         try:
             token = _json.loads(session_path.read_text(encoding="utf-8")).get("access_token", "")
             if not token:
-                return f"{feature_name} requires a paid plan. Run: claw login, then claw upgrade-plan"
+                return f"{feature_name} requires a paid plan. Run: claw-coder login, then claw-coder upgrade-plan"
         except Exception:
-            return "Could not read your saved session. Run: claw login"
+            return "Could not read your saved session. Run: claw-coder login"
 
         ssl_context = ssl.create_default_context()
         try:
@@ -3228,7 +3336,7 @@ class Agent:
                 session_path = Path.home() / ".claw-coder" / "session.json"
                 if session_path.exists():
                     session_path.unlink()
-                return "Your session is invalid or expired. Exit and run `claw login` again."
+                return "Your session is invalid or expired. Exit and run `claw-coder login` again."
             try:
                 detail = _json.loads(exc.read().decode("utf-8")).get("detail", {})
                 return detail.get("message", "Workspace access denied.")
@@ -3440,6 +3548,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Claw-coder is a local first AI agent that turns small local models into powerful coding companions")
     parser.add_argument("--model", default=DEFAULT_CHAT_MODEL)
     parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
+    parser.add_argument("--image-model", default=DEFAULT_IMAGE_MODEL, help="Vision model for HTML/CSS Docker screenshot analysis")
     parser.add_argument("--db-path", default=DEFAULT_DB_PATH)
     parser.add_argument("--collection", default=DEFAULT_COLLECTION)
     parser.add_argument("--knowledge-graph-path", default=DEFAULT_KNOWLEDGE_GRAPH_PATH)
@@ -3447,12 +3556,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-mode", choices=["local", "ssh"], default=os.getenv("CLAW_WORKSPACE_MODE", "local"))
     parser.add_argument("--workspace-ssh", default=os.getenv("CLAW_WORKSPACE_SSH"))
     parser.add_argument("--workspace-remote-dir", default=os.getenv("CLAW_WORKSPACE_REMOTE_DIR", "/workspaces"))
+    parser.add_argument("--trust-workspace", action="store_true", help="Trust the current folder without prompting")
+    parser.add_argument("--restricted", action="store_true", help="Start in restricted mode without prompting")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     chat = subparsers.add_parser("chat")
     chat.add_argument("--pdf", action="append", default=[], dest="pdf_paths")
     chat.add_argument("--document", action="append", default=[], dest="document_paths")
-    chat.add_argument("--ui", choices=["rich", "textual"], default="rich", help="Choose UI: rich (default) or textual (improved with scrolling/selection)")
+    chat.add_argument("--ui", choices=["rich"], default="rich", help="Terminal UI style (rich)")
     subparsers.add_parser("models")
     subparsers.add_parser("languages")
 
@@ -3509,7 +3620,15 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
 
     # Original Rich-based UI implementation
     set_terminal_title("Claw Coder")
-    print_banner(agent.model, agent.embedding_model)
+    # Cursor-style trust prompt on first open of this folder.
+    if not agent._skip_trust_prompt and not agent.workspace_trusted:
+        agent.workspace_trusted = ensure_workspace_trust(agent.workspace_root, prompt=True)
+    print_banner(
+        agent.model,
+        agent.embedding_model,
+        image_model=agent.image_model,
+        workspace_trusted=agent.workspace_trusted,
+    )
 
     docs = [path for path in (document_paths or []) if str(path).strip()]
     if docs:
@@ -3531,14 +3650,18 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 help_text = """
                         Available Commands:
                         • /models - List available models
-                        • /model <name> - Switch to specific model
+                        • /model <name> - Switch chat model
+                        • /image-model [name] - Show or set vision model for HTML Docker screenshots
+                        • /trust - Trust this folder (full tool access)
+                        • /trust status - Show trust state
+                        • /trust revoke - Return to restricted mode
                         • /workspace - Connect to remote workspace
                         • /workspace status - Show workspace status
                         • /workspace local - Switch to local mode
                         • /workspace pull <model> - Pull model on remote
                         • /pdf <file> - Load PDF document
                         • /title - Set conversation title
-                        • /status - Show model, Ollama, workspace, context, and memory health
+                        • /status - Show model, Ollama, trust, context, and memory health
                         • /display <compact|detailed> - Change terminal density
                         • /copy - Copy the latest assistant response
                         • Enter sends · Alt+Enter adds a line · Up/Down recalls history
@@ -3557,7 +3680,22 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                     message_count=len(agent.messages) - 1,
                     plan_count=len(agent.plan),
                     context_window=3072 if is_codespaces else 4096,
+                    image_model=agent.image_model,
+                    workspace_path=agent.workspace_root,
+                    workspace_trusted=agent.workspace_trusted,
                 )
+                continue
+
+            if user_input.lower().startswith("/trust"):
+                parts = user_input.split()
+                if len(parts) == 1 or parts[1] in {"yes", "y", "enable", "this"}:
+                    print_status(agent.set_workspace_trusted(True))
+                elif parts[1] in {"status", "show"}:
+                    print_status(agent.trust_status())
+                elif parts[1] in {"revoke", "untrust", "restricted", "no", "n"}:
+                    print_status(agent.set_workspace_trusted(False))
+                else:
+                    print_error("Usage: /trust | /trust status | /trust revoke")
                 continue
 
             if user_input.lower().startswith("/display"):
@@ -3629,6 +3767,14 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             
             if user_input.lower().startswith("/model "):
                 print_status(agent.switch_model(user_input.split(" ", 1)[1].strip()))
+                continue
+
+            if user_input.lower().startswith("/image-model") or user_input.lower().startswith("/imagemodel"):
+                parts = user_input.split(maxsplit=1)
+                if len(parts) == 1:
+                    print_status(f"Image model: {agent.image_model}")
+                else:
+                    print_status(agent.switch_image_model(parts[1].strip()))
                 continue
             
             if user_input.lower() == "/title":
@@ -3706,7 +3852,7 @@ def resolve_model_for_cli(explicit: Optional[str], interactive: bool = True) -> 
         return validate_ollama_model(explicit.strip())
     if interactive:
         return resolve_chat_model()
-    raise ValueError("No model specified. Use: claw <model> chat  or  claw chat --model <model>")
+    raise ValueError("No model specified. Use: claw-coder <model>  or  claw-coder --model <model>")
 
 
 def main() -> None:
@@ -3733,9 +3879,22 @@ def main() -> None:
     except (ValueError, RuntimeError) as exc:
         print_error(str(exc))
         return
+
+    # Interactive chat uses Cursor-style trust. Explicit CLI commands are
+    # treated as trusted unless --restricted was passed.
+    if args.trust_workspace:
+        trust_flag: Optional[bool] = True
+    elif args.restricted:
+        trust_flag = False
+    elif args.command == "chat":
+        trust_flag = None
+    else:
+        trust_flag = True
+
     agent = Agent(
         model=model,
         embedding_model=args.embedding_model,
+        image_model=args.image_model,
         rag_db_path=args.db_path,
         rag_collection=args.collection,
         knowledge_graph_path=args.knowledge_graph_path,
@@ -3743,6 +3902,7 @@ def main() -> None:
         workspace_mode=args.workspace_mode,
         workspace_ssh=args.workspace_ssh,
         workspace_remote_dir=args.workspace_remote_dir,
+        workspace_trusted=trust_flag,
     )
 
     if args.command == "ingest-code":

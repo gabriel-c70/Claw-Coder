@@ -44,7 +44,6 @@ const HELP = `
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  claw-coder [--pdf <file>...]    Start interactive chat (optionally preload  ║
 ║                                  PDFs)                                        ║
-║  claw-coder --ui textual         Use improved UI with scrolling & selection ║
 ║  models                           List local Ollama models                    ║
 ║  <model-name>                     Start claw-coder with specific Ollama model   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -73,7 +72,7 @@ const HELP = `
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║ 💳 ACCOUNT & BILLING                                                         ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  login [provider]              Log in via OAuth (default: github)            ║
+║  login                         Log in via GitHub OAuth                       ║
 ║  logout                        Clear saved session                           ║
 ║  whoami                        Show current logged-in user                   ║
 ║  clear-storage                 Clear all Claw-Coder local storage           ║
@@ -93,7 +92,9 @@ const HELP = `
 ║  --collection <name>            ChromaDB collection                          ║
 ║  --model <name>                 Ollama model for claw-coder                    ║
 ║  --embedding-model <name>       Ollama embedding model                       ║
-║  --ui <rich|textual>            Choose UI style (default: rich)              ║
+║  --image-model <name>           Vision model for HTML Docker screenshots     ║
+║  --trust-workspace              Trust the current folder (skip trust prompt) ║
+║  --restricted                   Start in restricted mode                     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -106,7 +107,6 @@ const HELP = `
 ║  claw-coder search "reranking" --top-k 5       Search with context            ║
 ║  claw-coder                    Start interactive chat                       ║
 ║  claw-coder --pdf report.pdf   Chat with PDF context                         ║
-║  claw-coder --ui textual       Use improved UI with scrolling & selection     ║
 ║  claw-coder qwen2.5-coder:7b   Use specific model                            ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -364,11 +364,16 @@ function collectDocumentOptions(args) {
   return output;
 }
 
+function hasFlag(args, names) {
+  return names.some((name) => args.includes(name));
+}
+
 function collectGlobalOptions(args) {
   const output = [];
   const mappings = [
     [["--model"], "--model"],
     [["--embedding-model"], "--embedding-model"],
+    [["--image-model"], "--image-model"],
     [["--db", "--db-path"], "--db-path"],
     [["--collection"], "--collection"],
     [["--graph", "--knowledge-graph-path"], "--knowledge-graph-path"],
@@ -383,6 +388,12 @@ function collectGlobalOptions(args) {
       output.push(target, value);
     }
   }
+  if (hasFlag(args, ["--trust-workspace", "--trust"])) {
+    output.push("--trust-workspace");
+  }
+  if (hasFlag(args, ["--restricted"])) {
+    output.push("--restricted");
+  }
   return output;
 }
 
@@ -390,6 +401,7 @@ function stripKnownOptions(args) {
   const optionsWithValues = new Set([
     "--model",
     "--embedding-model",
+    "--image-model",
     "--db",
     "--db-path",
     "--collection",
@@ -405,7 +417,7 @@ function stripKnownOptions(args) {
     "--document",
     "--ui",
   ]);
-  const flags = new Set(["--no-recursive", "--no-vector-rag", "--no-hybrid-rerank"]);
+  const flags = new Set(["--no-recursive", "--no-vector-rag", "--no-hybrid-rerank", "--trust-workspace", "--trust", "--restricted"]);
   const cleaned = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -696,7 +708,7 @@ function runUpgrade() {
   const result = spawnSync("npm", ["install", "-g", "claw-coder@latest"], { stdio: "inherit" });
   if (result.status === 0) {
     try { fs.unlinkSync(UPDATE_CHECK_FILE); } catch {}  // force a fresh check next run
-    console.log("\n✓ Upgraded. Run `claw --version` to confirm.");
+    console.log("\n✓ Upgraded. Run `claw-coder --version` to confirm.");
   } else {
     console.error("\nUpgrade failed. Try manually: npm install -g claw-coder@latest");
     process.exitCode = result.status || 1;
@@ -756,7 +768,7 @@ async function apiFetch(pathname, session, options = {}) {
     });
 
     if (response.status === 401) {
-      clearSession();
+      clearSession({ keepLoginVersion: true });
       throw new Error("Your session is invalid or expired. Run `claw-coder login` again.");
     }
 
@@ -1178,8 +1190,13 @@ async function main() {
 
   const pkg = require(path.join(packageRoot, "package.json"));
   
+  const AUTH_EXEMPT = new Set([
+    "login", "logout", "whoami", "--help", "-h", "help",
+    "--version", "-v", "setup", "doctor", "telemetry", "clear-storage",
+  ]);
+
   // Check if user needs to complete new version login
-  if (!hasCompletedNewVersionLogin() && command !== "login" && command !== "logout" && command !== "--help" && command !== "-h" && command !== "help" && command !== "--version" && command !== "-v" && command !== "setup" && command !== "doctor") {
+  if (!hasCompletedNewVersionLogin() && !AUTH_EXEMPT.has(command || "")) {
     const hasOldSession = loadSession() !== null;
     console.log("\n┌─────────────────────────────────────────┐");
     console.log("│     Welcome to the New Claw-Coder!      │");
@@ -1195,12 +1212,12 @@ async function main() {
     console.log("│  Please login once to get started:       │");
     console.log("│  Run: claw-coder login                   │");
     console.log("└─────────────────────────────────────────┘\n");
-    process.exitCode = 0;
+    process.exitCode = 1;
     return;
   }
   
   // If user has completed new version login but session expired, prompt to login again
-  if (hasCompletedNewVersionLogin() && !loadSession() && command !== "login" && command !== "logout" && command !== "--help" && command !== "-h" && command !== "help" && command !== "--version" && command !== "-v" && command !== "setup" && command !== "doctor") {
+  if (hasCompletedNewVersionLogin() && !loadSession() && !AUTH_EXEMPT.has(command || "")) {
     console.log("\n┌─────────────────────────────────────────┐");
     console.log("│     Session Expired                      │");
     console.log("├─────────────────────────────────────────┤");
@@ -1209,7 +1226,7 @@ async function main() {
     console.log("├─────────────────────────────────────────┤");
     console.log("│  Run: claw-coder login                   │");
     console.log("└─────────────────────────────────────────┘\n");
-    process.exitCode = 0;
+    process.exitCode = 1;
     return;
   }
   
@@ -1264,8 +1281,8 @@ async function main() {
   if (command === "embedding") {
     const embeddingModel = commandArgs[0];
   if (!embeddingModel) {
-        console.error("Usage: claw embedding <model-name>");
-        console.error("Example: claw embedding nomic-embed-text");
+        console.error("Usage: claw-coder embedding <model-name>");
+        console.error("Example: claw-coder embedding nomic-embed-text");
         process.exitCode = 1;
         return;
   }
@@ -1276,8 +1293,7 @@ async function main() {
   if (command === "login") {
     const provider = commandArgs[0] || "github";
     login(provider)
-        .then((session) => {
-        console.log(`\nLogged in as ${session.user?.email}`);
+        .then(() => {
         console.log("Run `claw-coder` to start using Claw-Coder.");
         })
         .catch((err) => {
@@ -1683,7 +1699,7 @@ async function main() {
   if (!KNOWN_COMMANDS.has(command)) {
     // If it's "chat", show error message
     if (command === "chat") {
-      console.error("Error: 'claw chat' is no longer supported. Use 'claw-coder' instead.");
+      console.error("Error: 'chat' as a subcommand is no longer needed. Just run 'claw-coder'.");
       console.error("Example: claw-coder");
       console.error("Example: claw-coder --pdf document.pdf");
       process.exitCode = 1;
@@ -1704,7 +1720,7 @@ async function main() {
     runAgent(buildAgentArgs(command, commandArgs));
   } catch (error) {
     console.error(error.message);
-    console.error("Run `claw --help` for usage.");
+    console.error("Run `claw-coder --help` for usage.");
     process.exitCode = 1;
   }
 }

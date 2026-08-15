@@ -182,12 +182,27 @@ def verify_token(authorization: str) -> str:
             github_id = user.get("id")
             if not github_id:
                 raise HTTPException(status_code=401, detail="Invalid token")
-            # find matching Supabase user by github_id in user_metadata
-            users_resp = supabase.auth.admin.list_users()
-            for u in users_resp:
-                meta = u.user_metadata or {}
-                if str(meta.get("github_id")) == str(github_id):
-                    return u.id
+            # Paginate admin users so we don't miss accounts beyond the first page.
+            page = 1
+            per_page = 200
+            while page <= 50:
+                try:
+                    users_resp = supabase.auth.admin.list_users(page=page, per_page=per_page)
+                except TypeError:
+                    users_resp = supabase.auth.admin.list_users()
+                    page = 51  # force exit after this single legacy call
+                users = getattr(users_resp, "users", None)
+                if users is None:
+                    users = users_resp if isinstance(users_resp, list) else []
+                if not users:
+                    break
+                for u in users:
+                    meta = getattr(u, "user_metadata", None) or {}
+                    if str(meta.get("github_id")) == str(github_id):
+                        return getattr(u, "id", None) or u.get("id")
+                if len(users) < per_page:
+                    break
+                page += 1
             # no Supabase user matched — use github_{id} as fallback user key
             return f"github_{github_id}"
     except HTTPException:
@@ -347,7 +362,7 @@ def check_and_increment(user_id: str, tool_name: str, plan: str) -> dict:
                 "month": mk,
                 "message": (
                     f"{tool_name} allows {limit} calls/month on {plan.upper()} plan. You've used {current}. "
-                    "Run `claw topup` to buy extra pay-as-you-go credits."
+                    "Run `claw-coder topup` to buy extra pay-as-you-go credits."
                 ),
             },
         )
@@ -500,7 +515,7 @@ def workspace_connect(authorization: str = Header(...)):
             status_code=402,
             detail={
                 "error": "workspace_paid_only",
-                "message": "Workspace mode requires the pro or max plan. Run `claw upgrade-plan` to see plans.",
+                "message": "Workspace mode requires the pro or max plan. Run `claw-coder upgrade-plan` to see plans.",
             },
         )
 
@@ -514,7 +529,7 @@ def workspace_connect(authorization: str = Header(...)):
                 "message": (
                     f"Workspace connections cost {WORKSPACE_CONNECT_COST} workspace credits "
                     f"(you have {get_credit_balance(user_id, 'workspace')} workspace credits). "
-                    "Run `claw upgrade-plan` to subscribe for workspace credits, or wait for next month's allotment."
+                    "Run `claw-coder upgrade-plan` to subscribe for workspace credits, or wait for next month's allotment."
                 ),
             },
         )
@@ -544,7 +559,7 @@ def generate_terminal_name(body: TerminalNamingRequest, authorization: str = Hea
                 "message": (
                     f"Terminal naming costs {cost} tool credits "
                     f"(you have {get_credit_balance(user_id, 'tools')} tool credits). "
-                    "Run `claw topup` to buy extra pay-as-you-go credits."
+                    "Run `claw-coder topup` to buy extra pay-as-you-go credits."
                 ),
             },
         )
@@ -788,44 +803,73 @@ def upsert_supabase_user(
         "Authorization": f"Bearer {service_key}",
     }
 
-    # Check for an existing account by its stable GitHub ID first. Email addresses
-    # can change, while the GitHub ID cannot. The Auth admin endpoint is paginated;
-    # requesting a large page prevents normal projects from missing an existing user.
-    list_res = requests.get(
-        f"{supabase_url}/auth/v1/admin/users",
-        headers=headers,
-        params={"page": 1, "per_page": 1000},
-        timeout=10,
-    )
+    def find_existing_user() -> Optional[dict]:
+        # Prefer email lookup when GoTrue supports it — avoids scanning every page.
+        try:
+            by_email = requests.get(
+                f"{supabase_url}/auth/v1/admin/users",
+                headers=headers,
+                params={"email": email},
+                timeout=10,
+            )
+            if by_email.status_code == 200:
+                payload = by_email.json()
+                users = payload.get("users", payload if isinstance(payload, list) else [])
+                if isinstance(users, list):
+                    for user in users:
+                        if str(user.get("email", "")).lower() == email.lower():
+                            return user
+        except Exception:
+            pass
 
-    if list_res.status_code == 200:
-        existing_users = list_res.json().get("users", [])
-        existing = next(
-            (
-                user for user in existing_users
-                if str((user.get("user_metadata") or {}).get("github_id")) == github_id
-            ),
-            None,
-        )
-        # Retain compatibility with users created before github_id was stored.
-        existing = existing or next(
-            (user for user in existing_users if user.get("email", "").lower() == email.lower()),
-            None,
-        )
-        if existing:
-            # Keep the stored email current when the GitHub account's primary email
-            # changes. Auth's admin "session" URL is not a supported GoTrue API, so
-            # the CLI continues using the already-verified GitHub token here.
-            if existing.get("email", "").lower() != email.lower():
-                update_res = requests.put(
-                    f"{supabase_url}/auth/v1/admin/users/{existing['id']}",
-                    headers={**headers, "Content-Type": "application/json"},
-                    json={"email": email, "email_confirm": True},
-                    timeout=10,
-                )
-                if update_res.status_code != 200:
-                    print(f"Warning: could not update Supabase email: {update_res.text}")
-            return {"supabase_user_id": existing["id"]}
+        page = 1
+        per_page = 200
+        while page <= 50:  # hard stop: 10k users
+            list_res = requests.get(
+                f"{supabase_url}/auth/v1/admin/users",
+                headers=headers,
+                params={"page": page, "per_page": per_page},
+                timeout=10,
+            )
+            if list_res.status_code != 200:
+                print(f"Warning: could not list Supabase users: {list_res.text}")
+                return None
+            existing_users = list_res.json().get("users", [])
+            if not existing_users:
+                return None
+            existing = next(
+                (
+                    user for user in existing_users
+                    if str((user.get("user_metadata") or {}).get("github_id")) == github_id
+                ),
+                None,
+            )
+            existing = existing or next(
+                (user for user in existing_users if user.get("email", "").lower() == email.lower()),
+                None,
+            )
+            if existing:
+                return existing
+            if len(existing_users) < per_page:
+                return None
+            page += 1
+        return None
+
+    existing = find_existing_user()
+    if existing:
+        # Keep the stored email current when the GitHub account's primary email
+        # changes. Auth's admin "session" URL is not a supported GoTrue API, so
+        # the CLI continues using the already-verified GitHub token here.
+        if existing.get("email", "").lower() != email.lower():
+            update_res = requests.put(
+                f"{supabase_url}/auth/v1/admin/users/{existing['id']}",
+                headers={**headers, "Content-Type": "application/json"},
+                json={"email": email, "email_confirm": True},
+                timeout=10,
+            )
+            if update_res.status_code != 200:
+                print(f"Warning: could not update Supabase email: {update_res.text}")
+        return {"supabase_user_id": existing["id"]}
 
     # 2. No existing user — create one
     create_res = requests.post(
@@ -1097,7 +1141,7 @@ def payment_success():
           <div class="panel">
             <h1>Payment received</h1>
             <p>Your credits are added after Dodo sends the webhook. This usually takes a few seconds.</p>
-            <p>Back in your terminal, run <code>claw credits</code> to confirm your balance.</p>
+            <p>Back in your terminal, run <code>claw-coder credits</code> to confirm your balance.</p>
           </div>
         </main>
       </body>

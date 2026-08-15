@@ -161,7 +161,7 @@ Don't be overly formal or robotic. Be casual and direct.
 - Mark tasks as "in_progress" when working on them, "completed" when done
 
 ## File Explanations
-When user asks to explain a file: run `claw ingest-code <file_path>` and return JSON:
+When user asks to explain a file: run `claw-coder ingest-code <file_path>` and return JSON:
 ```json
 {
   "file": "<file_path>",

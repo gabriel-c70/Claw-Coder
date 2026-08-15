@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
@@ -10,6 +11,7 @@ const SESSION_FILE = path.join(SESSION_DIR, "session.json");
 // The old marker did not contain a version, so it could only force login once.
 const REQUIRED_LOGIN_VERSION = 2;
 const LOGIN_VERSION_FILE = path.join(SESSION_DIR, "login_version");
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // soft local TTL; GitHub may revoke earlier
 
 const BAKED_CONFIG = {
   supabaseUrl:    "https://nqbrdafvdfntxvhbyama.supabase.co",
@@ -55,16 +57,15 @@ function loadSession() {
   try {
     const data = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
 
+    // Honor expiry strictly — never silently extend it locally.
     if (data.expires_at && Date.now() / 1000 > data.expires_at - 60) {
-      // Session expired, clear only the session file (keep new version login flag)
       if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
       return null;
     }
 
-    const sevenDays = 7 * 24 * 60 * 60;
-    if (data.expires_at && (data.expires_at - Date.now() / 1000) < sevenDays) {
-      data.expires_at = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
-      saveSession(data);
+    if (!data.access_token && !data.github_token) {
+      if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
+      return null;
     }
 
     return data;
@@ -73,9 +74,9 @@ function loadSession() {
   }
 }
 
-function clearSession() {
+function clearSession({ keepLoginVersion = false } = {}) {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-  if (fs.existsSync(LOGIN_VERSION_FILE)) fs.unlinkSync(LOGIN_VERSION_FILE);
+  if (!keepLoginVersion && fs.existsSync(LOGIN_VERSION_FILE)) fs.unlinkSync(LOGIN_VERSION_FILE);
 }
 
 function hasCompletedNewVersionLogin() {
@@ -128,8 +129,42 @@ async function logErrorToSupabase(error, context = {}) {
   }
 }
 
-async function login() {
-  const { url: supabaseUrl, anonKey, serviceKey, githubClientId } = getSupabaseConfig();
+function openVerificationUrl(url) {
+  try {
+    if (process.platform === "darwin") {
+      execFileSync("open", [url], { stdio: "ignore" });
+    } else if (process.platform === "win32") {
+      execFileSync("cmd", ["/c", "start", "", url], { stdio: "ignore", windowsHide: true });
+    } else {
+      execFileSync("xdg-open", [url], { stdio: "ignore" });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function printBox(lines) {
+  const width = Math.max(...lines.map((line) => line.length), 40);
+  const top = `┌${"─".repeat(width + 2)}┐`;
+  const bottom = `└${"─".repeat(width + 2)}┘`;
+  console.log(top);
+  for (const line of lines) {
+    console.log(`│ ${line.padEnd(width)} │`);
+  }
+  console.log(bottom);
+}
+
+async function login(provider = "github") {
+  const normalized = String(provider || "github").trim().toLowerCase();
+  if (normalized !== "github") {
+    throw new Error(
+      `Unsupported login provider '${provider}'. Only GitHub is supported right now.\n` +
+      "Run: claw-coder login"
+    );
+  }
+
+  const { githubClientId } = getSupabaseConfig();
 
   if (!githubClientId || githubClientId === "your-github-client-id") {
     throw new Error(
@@ -138,12 +173,13 @@ async function login() {
     );
   }
 
-  console.log("\n┌────────────────────────────────────────--─┐");
-  console.log("  │         Claw-Coder Login                  │");
-  console.log("  ├─────────────────────────────────────────--┤");
-  console.log("  │  Authenticating via GitHub OAuth...       │");
-  console.log("  │  This works for ANY GitHub account        │");
-  console.log("  └─────────────────────────────────────────--┘\n");
+  console.log("");
+  printBox([
+    "Claw-Coder Login",
+    "Authenticating via GitHub OAuth",
+    "Works with any GitHub account",
+  ]);
+  console.log("");
 
   const deviceRes = await fetch("https://github.com/login/device/code", {
     method: "POST",
@@ -167,23 +203,17 @@ async function login() {
     );
   }
 
-  console.log("┌─────────────────────────────────────────┐");
-  console.log("│  Step 1: Open this link in your browser │");
-  console.log("├─────────────────────────────────────────┤");
-  console.log(`│  ${device.verification_uri.substring(0, 38).padEnd(38)}│`);
-  console.log("├─────────────────────────────────────────┤");
-  console.log("│  Step 2: Enter this code                │");
-  console.log("├─────────────────────────────────────────┤");
-  console.log(`│  ${device.user_code.padEnd(38)}         │`);
-  console.log("└─────────────────────────────────────────┘\n");
+  printBox([
+    "Step 1: Open this link in your browser",
+    device.verification_uri,
+    "Step 2: Enter this code",
+    device.user_code,
+  ]);
+  console.log("");
 
-  const cmd = process.platform === "darwin" ? "open"
-             : process.platform === "win32"  ? "start"
-             : "xdg-open";
-  try {
-    require("child_process").execSync(`${cmd} "${device.verification_uri}"`, { stdio: "ignore" });
+  if (openVerificationUrl(device.verification_uri)) {
     console.log("✓ Browser opened automatically\n");
-  } catch {
+  } else {
     console.log("ℹ  Could not open browser automatically. Please open the link manually.\n");
   }
 
@@ -210,7 +240,7 @@ async function login() {
       continue;
     }
     if (tokenData.error === "slow_down") {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
       continue;
     }
     if (tokenData.error) {
@@ -251,35 +281,36 @@ async function login() {
     console.log(`✓ Welcome, ${githubUser.login}!`);
     console.log("🔄  Connecting to Claw-Coder services...");
 
-
-
     const authRes = await fetch(`${getApiUrl()}/auth/github-callback`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            github_token: tokenData.access_token,
-            github_id: String(githubUser.id),
-            github_login: githubUser.login,
-            avatar_url: githubUser.avatar_url,
-  }),
-});
-  if (!authRes.ok) {
-    const errorText = await authRes.text();
-    await logErrorToSupabase(`Server auth failed: ${errorText}`, { endpoint: "github-callback" });
-    throw new Error(`Server auth failed: ${errorText}`);
-  }
-  const supabaseData = await authRes.json();
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        github_token: tokenData.access_token,
+        github_id: String(githubUser.id),
+        github_login: githubUser.login,
+        avatar_url: githubUser.avatar_url,
+      }),
+    });
+    if (!authRes.ok) {
+      const errorText = await authRes.text();
+      await logErrorToSupabase(`Server auth failed: ${errorText}`, { endpoint: "github-callback" });
+      throw new Error(`Server auth failed: ${errorText}`);
+    }
+    const supabaseData = await authRes.json();
 
+    // Server currently returns supabase_user_id only; API auth verifies the
+    // GitHub token directly. Prefer a real JWT if the server starts returning one.
     const accessToken = supabaseData?.access_token || tokenData.access_token;
     const expiresAt = supabaseData?.expires_at
       ? Math.floor(new Date(supabaseData.expires_at).getTime() / 1000)
-      : Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
+      : Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
 
     const session = {
       access_token:  accessToken,
       refresh_token: supabaseData?.refresh_token || null,
       expires_at:    expiresAt,
       provider:      "github",
+      token_type:    supabaseData?.access_token ? "supabase" : "github",
       github_token:  tokenData.access_token,
       user: {
         id:    supabaseData?.supabase_user_id || String(githubUser.id),
@@ -294,19 +325,19 @@ async function login() {
 
     saveSession(session);
     markNewVersionLoginComplete();
-    console.log("\n┌────────────────────────────────────────--─┐");
-    console.log("  │         Login Successful!                 │");
-    console.log("  ├─────────────────────────────────────────--┤");
-    console.log(`  │  User: ${primaryEmail.substring(0, 30).padEnd(32)}│`);
-    console.log(`  │  GitHub: @${githubUser.login.padEnd(32)}  │`);
-    console.log("  ├─────────────────────────────────────────--┤");
-    console.log("  │  Session valid for 30 days                │");
-    console.log("  │  You can now use all Claw-Coder features  │");
-    console.log("  └─────────────────────────────────────────--┘\n");
+    console.log("");
+    printBox([
+      "Login Successful!",
+      `User: ${primaryEmail}`,
+      `GitHub: @${githubUser.login}`,
+      "Session valid for 30 days (or until GitHub revokes access)",
+      "You can now use all Claw-Coder features",
+    ]);
+    console.log("");
     return session;
   }
 
-  throw new Error("Login timed out — the code expired. Run claw login to try again.");
+  throw new Error("Login timed out — the code expired. Run claw-coder login to try again.");
 }
 
 module.exports = { login, loadSession, clearSession, hasCompletedNewVersionLogin, markNewVersionLoginComplete };
