@@ -3309,11 +3309,13 @@ class Agent:
                     wait_time = (attempt + 1) * 3  # Increased backoff: 3, 6, 9, 12, 15, 18 seconds
                     logging.warning(f"Ollama connection issue (attempt {attempt + 1}/7): {exc}. Retrying in {wait_time}s...")
                     
-                    # Try to restart ollama if it's completely crashed
-                    if "terminated" in error_str or "signal" in error_str:
-                        logging.info("Ollama appears to have crashed, attempting to restart...")
-                        if ensure_ollama_running():
-                            logging.info("Ollama restarted successfully")
+                    # Health-check and restart when the service disappeared. This
+                    # covers connection-refused/time-out failures as well as the
+                    # explicit "terminated" errors Ollama emits after a crash.
+                    if not ensure_ollama_running():
+                        logging.warning("Ollama is still unavailable; the next retry will check again.")
+                    else:
+                        logging.info("Ollama is healthy again; retrying the request.")
                     
                     time.sleep(wait_time)
                     continue
