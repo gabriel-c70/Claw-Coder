@@ -7,20 +7,24 @@ This file combines the useful parts of:
 - clock_tree_rag.py: multi-language Tree-sitter code chunking
 
 Setup:
+    claw-coder setup  # Universal automatic setup
+    # Or manual:
     pip install chromadb ollama ddgs pypdf tree-sitter tree-sitter-python
     pip install tree-sitter-javascript tree-sitter-typescript tree-sitter-json
     pip install tree-sitter-html tree-sitter-css tree-sitter-java tree-sitter-go tree-sitter-rust
     ollama serve
     ollama pull nomic-embed-text
-    ollama pull granite4.1:8b
+    ollama pull llama3.2:1b
+    ollama pull llava-phi3:iq2_s
 
 Examples:
-    python agent_rag.py languages
-    python agent_rag.py code-chunks agent.py
-    python agent_rag.py ingest-code agent.py
-    python agent_rag.py ingest-pdf data/2509.24435v1.pdf
-    python agent_rag.py search-kb "where is execute_tool?"
-    python agent_rag.py chat
+    claw-coder setup      # Universal setup (recommended)
+    claw-coder languages
+    claw-coder code-chunks agent.py
+    claw-coder ingest-code agent.py
+    claw-coder ingest-pdf data/2509.24435v1.pdf
+    claw-coder search "where is execute_tool?"
+    claw-coder              # Start interactive chat
 """
 
 from __future__ import annotations
@@ -213,7 +217,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 DEFAULT_CHAT_MODEL = ""
 DEFAULT_EMBEDDING_MODEL = os.getenv("CLAW_EMBEDDING_MODEL", "nomic-embed-text")
-DEFAULT_IMAGE_MODEL = os.getenv("CLAW_IMAGE_MODEL", "translategemma:4b")
+DEFAULT_IMAGE_MODEL = os.getenv("CLAW_IMAGE_MODEL", "llava:7b")  # Vision model for screenshots (llava-phi3:iq2_s is smaller alternative)
 DEFAULT_DB_PATH = "agent_rag_chroma_db"
 DEFAULT_COLLECTION = "agent_mixed_knowledge"
 DEFAULT_KNOWLEDGE_GRAPH_PATH = DEFAULT_GRAPH_PATH
@@ -3129,10 +3133,30 @@ class Agent:
             validate_ollama_model(vision_model)
             vision_model = self.image_model = vision_model
         except ValueError as exc:
-            return (
-                f"Vision model '{vision_model}' is unavailable: {exc}. "
-                f"Set one with /image-model <name> or CLAW_IMAGE_MODEL."
-            )
+            # Try fallback models if primary fails (prioritizing smaller working models)
+            fallback_models = [
+                "llava-phi3:iq2_s",  # Smallest working vision model (1.9GB)
+                "knoopx/llava-phi-2:3b-q8_0",  # Lightweight alternative (3.0GB)
+                "llava:7b",  # Standard model
+                "llava:13b",  # Higher quality
+                "translategemma:4b"  # Alternative
+            ]
+            for fallback in fallback_models:
+                if fallback == vision_model:
+                    continue
+                try:
+                    validate_ollama_model(fallback)
+                    vision_model = self.image_model = fallback
+                    logging.info(f"Using fallback vision model: {fallback}")
+                    break
+                except ValueError:
+                    continue
+            else:
+                return (
+                    f"Vision model '{vision_model}' is unavailable: {exc}. "
+                    f"Tried fallbacks: {fallback_models}. "
+                    f"Set one with /image-model <name> or CLAW_IMAGE_MODEL."
+                )
 
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         prompt = (
@@ -3819,25 +3843,24 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             
             # Streaming callback function
             full_streamed_content = []
+            streaming_happened = False
             def stream_callback(content):
                 # Keep the response until completion so fenced code can be
                 # syntax highlighted with its language badge. File-edit previews
                 # still render live when the agent calls a write tool.
+                nonlocal streaming_happened
                 full_streamed_content.append(content)
+                # Stream content to console in real-time
+                if content:
+                    streaming_happened = True
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
             
             with chat_spinner:
                 response = agent.chat(user_input, tool_status_display=tool_display, stream_callback=stream_callback, chat_spinner=chat_spinner)
             
-            # Render the completed response once, including copy-friendly code blocks.
-            if full_streamed_content:
-                last_response = response or "".join(full_streamed_content)
-                if last_response:
-                    if any(keyword in last_response.lower() for keyword in ("ollama service", "connection error", "connection refused", "terminated")):
-                        print_recovery_guidance(last_response)
-                    else:
-                        print_assistant_response(last_response)
-            # If streaming didn't happen (fallback), print the full response
-            elif response:
+            # Only render if streaming didn't happen (fallback case)
+            if not streaming_happened and response:
                 last_response = response
                 if any(keyword in response.lower() for keyword in ("ollama service", "connection error", "connection refused", "terminated")):
                     print_recovery_guidance(response)

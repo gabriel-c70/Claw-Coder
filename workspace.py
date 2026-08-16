@@ -779,7 +779,7 @@ class WorkspaceRemoteClient:
     def _remote_python_stream(self, script: str, payload: Dict[str, Any], stream_callback, timeout: int = 600) -> Dict[str, Any]:
         """
         Runs `script` on the remote machine via `python3 -c` with streaming support.
-        Reads output line by line and calls stream_callback for each chunk.
+        Reads output line by line from stderr (where the remote script writes) and calls stream_callback for each chunk.
         """
         encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
         remote_command = (
@@ -801,8 +801,8 @@ class WorkspaceRemoteClient:
                 bufsize=1  # Line buffered
             )
             
-            # Read output line by line
-            for line in process.stdout:
+            # Read from stderr since the remote script writes there
+            for line in process.stderr:
                 line = line.strip()
                 if not line:
                     continue

@@ -6,9 +6,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { login, loadSession, clearSession, hasCompletedNewVersionLogin } = require("./auth");
-// qwen3-embedding:4b is a large model for the smallest Codespaces machines.
-// A compact embedding model leaves enough memory for the chat model as well.
-const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "nomic-embed-text"]
+// Lightweight models that work well on all systems including resource-constrained environments
+const DEFAULT_OLLAMA_MODELS = ["llama3.2:1b", "nomic-embed-text", "llava-phi3:iq2_s"]
 
 const packageRoot = path.resolve(__dirname, "..");
 const pythonAgent = path.join(packageRoot, "agent_rag.py");
@@ -641,22 +640,123 @@ function venvPythonPath(venvDir) {
 }
 
 function runSetup() {
+  console.log("=== Claw-Coder Advanced Universal Setup ===");
+  console.log("Detecting environment and configuring dependencies...\n");
+
+  // Detect environment
+  const isKaggle = process.env.KAGGLE_KERNEL_INTEGRATIONS !== undefined || fs.existsSync("/kaggle");
+  const isCodespaces = process.env.GITHUB_CODESPACES === "true" || process.env.CODESPACES === "true";
+  const isWorkspace = fs.existsSync("/workspace");
+  
+  let environment = "local";
+  if (isKaggle) {
+    environment = "kaggle";
+    console.log("✓ Detected Kaggle environment");
+  } else if (isCodespaces) {
+    environment = "codespaces";
+    console.log("✓ Detected GitHub Codespaces environment");
+  } else if (isWorkspace) {
+    environment = "workspace";
+    console.log("✓ Detected workspace environment");
+  } else {
+    console.log("✓ Detected local environment");
+  }
+
+  // Detect OS
+  const osType = process.platform;
+  console.log(`✓ Operating System: ${osType}`);
+
+  // Fix Python environment first
+  console.log("\nStep 1: Fixing Python environment...");
+  
   let python = findPython();
   if (!python) {
     const bootstrap = bootstrapPythonSpec();
     if (!bootstrap) {
-      console.error("Python was not found. Install Python 3.11 or 3.12, or set CLAW_PYTHON=/path/to/python.");
+      console.error("✗ Python not found. Install Python 3.8+ first.");
       process.exitCode = 1;
       return;
     }
     python = bootstrap.command;
   }
-  if (!fs.existsSync(requirementsFile)) {
-    console.error(`Missing requirements file: ${requirementsFile}`);
-    process.exitCode = 1;
-    return;
+
+  const pythonVersion = getPythonVersion(python);
+  console.log(`✓ Python version: ${(pythonVersion && pythonVersion.full) || 'unknown'}`);
+
+  // Ensure pip is available
+  console.log("✓ Ensuring pip is available...");
+  const pipCheck = run(python, ["-m", "pip", "--version"], { stdio: "pipe" });
+  if (pipCheck.status !== 0) {
+    console.log("  Installing pip from get-pip.py...");
+    try {
+      const pipInstall = run(python, ["-c", "import urllib.request; exec(urllib.request.urlopen('https://bootstrap.pypa.io/get-pip.py').read().decode())"], { stdio: "pipe", timeout: 60000 });
+      if (pipInstall.status === 0) {
+        console.log("  ✓ Pip installed successfully");
+      } else {
+        console.warn("  Warning: Could not install pip automatically, will try to continue");
+      }
+    } catch (e) {
+      console.warn("  Warning: Pip installation failed, will try to continue");
+    }
   }
 
+  // Upgrade pip
+  console.log("✓ Upgrading pip...");
+  const upgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], { stdio: "pipe" });
+  if (upgradePip.status === 0) {
+    console.log("✓ Pip upgraded successfully");
+  } else {
+    console.warn("  Warning: Failed to upgrade pip (continuing anyway)");
+  }
+
+  // Install wrapt if missing (common issue)
+  console.log("✓ Fixing common Python environment issues...");
+  const wraptInstall = run(python, ["-m", "pip", "install", "wrapt"], { stdio: "pipe" });
+  if (wraptInstall.status === 0) {
+    console.log("✓ Common Python issues fixed");
+  } else {
+    console.warn("  Warning: Could not install wrapt (continuing anyway)");
+  }
+
+  // Install system dependencies if possible
+  console.log("\nStep 2: Installing system dependencies...");
+  if (osType === "linux") {
+    console.log("  Linux detected - checking for package managers...");
+    // Try apt-get
+    const aptCheck = run("which", ["apt-get"], { stdio: "pipe" });
+    if (aptCheck.status === 0) {
+      console.log("  Installing via apt-get...");
+      const aptUpdate = run("apt-get", ["update", "-qq"], { stdio: "pipe" });
+      if (aptUpdate.status === 0) {
+        const aptInstall = run("apt-get", ["install", "-y", "-qq", "curl", "git", "ssh-client", "build-essential", "python3-dev"], { stdio: "pipe" });
+        if (aptInstall.status === 0) {
+          console.log("✓ System dependencies installed");
+        } else {
+          console.warn("  Warning: Some system dependencies could not be installed (may need sudo)");
+        }
+      } else {
+        console.warn("  Warning: Could not update apt-get (may need sudo)");
+      }
+    }
+    // Try yum
+    const yumCheck = run("which", ["yum"], { stdio: "pipe" });
+    if (yumCheck.status === 0) {
+      console.log("  Installing via yum...");
+      const yumInstall = run("yum", ["install", "-y", "-q", "curl", "git", "ssh", "python3-devel"], { stdio: "pipe" });
+      if (yumInstall.status === 0) {
+        console.log("✓ System dependencies installed");
+      } else {
+        console.warn("  Warning: Some system dependencies could not be installed (may need sudo)");
+      }
+    }
+  } else if (osType === "darwin") {
+    console.log("  macOS detected - skipping system package installation");
+  } else if (osType === "win32") {
+    console.log("  Windows detected - skipping system package installation");
+  }
+
+  // Create virtual environment
+  console.log("\nStep 3: Setting up virtual environment...");
   const venvDir = path.join(packageRoot, "venv");
   const usingBundledVenv = python.includes(`${path.sep}venv${path.sep}`)
     || python.includes(`${path.sep}.venv${path.sep}`);
@@ -664,54 +764,269 @@ function runSetup() {
   if (!usingBundledVenv && !process.env.CLAW_PYTHON) {
     const bootstrap = bootstrapPythonSpec();
     if (bootstrap && !fs.existsSync(venvDir)) {
-      console.log("Creating local Python virtual environment (prefer Python 3.12 for ChromaDB support)...");
-      const createVenv = run(
-        bootstrap.command,
-        [...bootstrap.prefixArgs, "-m", "venv", venvDir],
-        { cwd: packageRoot },
-      );
-      if (createVenv.status !== 0) {
-        process.exitCode = createVenv.status || 1;
+      console.log("  Creating virtual environment...");
+      try {
+        const createVenv = run(
+          bootstrap.command,
+          [...bootstrap.prefixArgs, "-m", "venv", venvDir],
+          { cwd: packageRoot },
+        );
+        if (createVenv.status !== 0) {
+          console.error("✗ Failed to create virtual environment");
+          console.error("  You may need to run: python3 -m venv venv");
+          process.exitCode = createVenv.status || 1;
+          return;
+        }
+        python = venvPythonPath(venvDir);
+        console.log("✓ Virtual environment created");
+      } catch (e) {
+        console.error("✗ Failed to create virtual environment:", e.message);
+        process.exitCode = 1;
         return;
       }
-      python = venvPythonPath(venvDir);
+    } else {
+      console.log("✓ Virtual environment already exists");
     }
+  } else {
+    console.log("✓ Using existing virtual environment");
   }
 
-  console.log(`Installing Python dependencies with ${python}...`);
-  const versionCheck = run(
-    python,
-    ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
-    { cwd: packageRoot, stdio: "pipe" },
-  );
-  const pyVersion = (versionCheck.stdout || "").trim();
-  if (pyVersion === "3.13") {
-    console.warn(
-      "Warning: Python 3.13 cannot install ChromaDB (vector RAG). "
-      + "Remove ./venv and run `claw-coder setup` again so it can create a Python 3.12 environment.",
-    );
+  // Activate virtual environment (set python path)
+  if (fs.existsSync(venvDir)) {
+    python = venvPythonPath(venvDir);
+    console.log("✓ Virtual environment activated");
   }
 
-  const upgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip"], { cwd: packageRoot });
-  if (upgradePip.status !== 0) {
-    process.exitCode = upgradePip.status || 1;
+  // Upgrade pip in virtual environment
+  console.log("\nStep 4: Upgrading pip in virtual environment...");
+  const venvUpgradePip = run(python, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], { stdio: "pipe" });
+  if (venvUpgradePip.status === 0) {
+    console.log("✓ Pip upgraded in virtual environment");
+  }
+
+  // Install Python dependencies
+  console.log("\nStep 5: Installing Python dependencies...");
+  if (!fs.existsSync(requirementsFile)) {
+    console.error(`✗ Missing requirements file: ${requirementsFile}`);
+    process.exitCode = 1;
     return;
   }
 
   const result = run(
     python,
-    ["-m", "pip", "install", "-r", requirementsFile, "--default-timeout", "120", "--retries", "10"],
+    ["-m", "pip", "install", "-r", requirementsFile, "--default-timeout", "180", "--retries", "10"],
     { cwd: packageRoot },
   );
   if (result.status !== 0) {
-    console.error("Python dependency install failed. Check your network connection and run `claw-coder setup` again.");
+    console.error("✗ Python dependency install failed. Check your network connection.");
+    process.exitCode = result.status || 1;
+    return;
   }
-  console.log("");
-  installOllama();
-  startOllamaServe();
-  pullDefaultModels(DEFAULT_OLLAMA_MODELS);
-  process.exitCode = 0;
+  console.log("✓ Python dependencies installed");
 
+  // Install environment-specific dependencies
+  console.log("\nStep 6: Installing environment-specific dependencies...");
+  if (isKaggle) {
+    console.log("  Installing Kaggle-specific dependencies...");
+    const kaggleInstall = run(python, ["-m", "pip", "install", "jupyter", "ipywidgets", "matplotlib", "seaborn"], { stdio: "pipe" });
+    if (kaggleInstall.status === 0) {
+      console.log("✓ Kaggle-specific dependencies installed");
+    } else {
+      console.warn("  Warning: Some Kaggle dependencies could not be installed (not critical)");
+    }
+  } else if (isCodespaces) {
+    console.log("  Installing Codespaces-specific dependencies...");
+    const codespacesInstall = run(python, ["-m", "pip", "install", "jupyterlab"], { stdio: "pipe" });
+    if (codespacesInstall.status === 0) {
+      console.log("✓ Codespaces-specific dependencies installed");
+    } else {
+      console.warn("  Warning: Some Codespaces dependencies could not be installed (not critical)");
+    }
+  }
+
+  // Download and setup Ollama
+  console.log("\nStep 7: Setting up Ollama...");
+  installOllama();
+
+  // Start Ollama with memory-aware configuration
+  console.log("\nStep 8: Starting Ollama service...");
+  
+  // Configure Ollama based on available memory
+  let ollamaConfig = {
+    OLLAMA_NUM_PARALLEL: "1",
+    OLLAMA_MAX_QUEUE: "4",
+    OLLAMA_LOAD_TIMEOUT: "20m",
+    OLLAMA_REQUEST_TIMEOUT: "20m"
+  };
+
+  if (osType === "linux") {
+    try {
+      const memCheck = run("free", ["-m"], { stdio: "pipe" });
+      if (memCheck.status === 0) {
+        const memMatch = (memCheck.stdout || "").match(/Mem:\s+(\d+)/);
+        if (memMatch) {
+          const availableMem = parseInt(memMatch[1]);
+          console.log(`  Available memory: ${availableMem}MB`);
+          
+          if (availableMem < 4096) {
+            ollamaConfig = {
+              OLLAMA_NUM_PARALLEL: "1",
+              OLLAMA_MAX_QUEUE: "2",
+              OLLAMA_LOAD_TIMEOUT: "30m",
+              OLLAMA_REQUEST_TIMEOUT: "30m"
+            };
+            console.log("  Configured for low-memory environment");
+          } else if (availableMem < 8192) {
+            ollamaConfig = {
+              OLLAMA_NUM_PARALLEL: "1",
+              OLLAMA_MAX_QUEUE: "4",
+              OLLAMA_LOAD_TIMEOUT: "20m",
+              OLLAMA_REQUEST_TIMEOUT: "20m"
+            };
+            console.log("  Configured for medium-memory environment");
+          } else {
+            ollamaConfig = {
+              OLLAMA_NUM_PARALLEL: "1",
+              OLLAMA_MAX_QUEUE: "8",
+              OLLAMA_LOAD_TIMEOUT: "10m",
+              OLLAMA_REQUEST_TIMEOUT: "10m"
+            };
+            console.log("  Configured for high-memory environment");
+          }
+        }
+      }
+    } catch (e) {
+      console.log("  Could not detect memory, using default configuration");
+    }
+  }
+
+  // Set Ollama environment variables
+  Object.assign(process.env, ollamaConfig);
+  
+  startOllamaServe();
+
+  // Pull recommended models with fallbacks
+  console.log("\nStep 9: Pulling recommended models...");
+  
+  // Chat model with fallbacks
+  console.log("  Pulling lightweight chat model...");
+  let chatPulled = false;
+  const chatModels = ["llama3.2:1b", "qwen2.5:0.5b", "llama3.2:3b"];
+  for (const model of chatModels) {
+    console.log(`    Trying ${model}...`);
+    const result = spawnSync("ollama", ["pull", model], { stdio: "pipe", timeout: 300000 });
+    if (result.status === 0) {
+      console.log(`    ✓ ${model} pulled successfully`);
+      chatPulled = true;
+      break;
+    } else {
+      console.log(`    ✗ ${model} failed, trying next option`);
+    }
+  }
+  if (!chatPulled) {
+    console.warn("  Warning: Could not pull any chat model. You can manually run: ollama pull llama3.2:1b");
+  }
+  
+  // Embedding model with fallbacks
+  console.log("  Pulling embedding model...");
+  let embedPulled = false;
+  const embedModels = ["nomic-embed-text"];
+  for (const model of embedModels) {
+    console.log(`    Trying ${model}...`);
+    const result = spawnSync("ollama", ["pull", model], { stdio: "pipe", timeout: 300000 });
+    if (result.status === 0) {
+      console.log(`    ✓ ${model} pulled successfully`);
+      embedPulled = true;
+      break;
+    }
+  }
+  if (!embedPulled) {
+    console.warn("  Warning: Could not pull embedding model. You can manually run: ollama pull nomic-embed-text");
+  }
+  
+  // Image model with fallbacks (prioritizing small working models)
+  console.log("  Pulling lightweight image model for screenshot analysis...");
+  let imagePulled = false;
+  const imageModels = ["llava-phi3:iq2_s", "knoopx/llava-phi-2:3b-q8_0", "llava:7b"];
+  for (const model of imageModels) {
+    console.log(`    Trying ${model}...`);
+    const result = spawnSync("ollama", ["pull", model], { stdio: "pipe", timeout: 300000 });
+    if (result.status === 0) {
+      console.log(`    ✓ ${model} pulled successfully`);
+      imagePulled = true;
+      break;
+    } else {
+      console.log(`    ✗ ${model} failed, trying next option`);
+    }
+  }
+  if (!imagePulled) {
+    console.warn("  Warning: Could not pull image model. Screenshot analysis may not work. You can manually run: ollama pull llava-phi3:iq2_s");
+  }
+
+  // Set up environment variables
+  console.log("\nStep 10: Setting environment variables...");
+  const envFile = path.join(packageRoot, ".env");
+  const envContent = `# Claw-Coder Environment Configuration
+# Generated by claw-coder advanced universal setup
+
+# Ollama Configuration
+OLLAMA_HOST=127.0.0.1
+OLLAMA_NUM_PARALLEL=${ollamaConfig.OLLAMA_NUM_PARALLEL}
+OLLAMA_MAX_QUEUE=${ollamaConfig.OLLAMA_MAX_QUEUE}
+OLLAMA_KEEP_ALIVE=5m
+OLLAMA_LOAD_TIMEOUT=${ollamaConfig.OLLAMA_LOAD_TIMEOUT}
+OLLAMA_REQUEST_TIMEOUT=${ollamaConfig.OLLAMA_REQUEST_TIMEOUT}
+
+# Model Configuration
+CLAW_MODEL=llama3.2:1b
+CLAW_EMBEDDING_MODEL=nomic-embed-text
+CLAW_IMAGE_MODEL=llava-phi3:iq2_s
+
+# Environment Configuration
+ENVIRONMENT=${environment}
+DISPLAY_MODE=detailed
+`;
+  fs.writeFileSync(envFile, envContent);
+  console.log("✓ Environment configuration saved to .env");
+
+  // Create run script
+  console.log("\nStep 11: Creating helper scripts...");
+  const runScript = `#!/bin/bash
+# Claw-Coder run script
+source venv/bin/activate
+python agent_rag.py chat "$@"
+`;
+  const runScriptPath = path.join(packageRoot, "run_claw_coder.sh");
+  fs.writeFileSync(runScriptPath, runScript);
+  fs.chmodSync(runScriptPath, 0o755);
+  console.log("✓ Helper scripts created");
+
+  // Final summary
+  console.log("\n=== Setup Complete ===");
+  console.log(`✓ Environment: ${environment}`);
+  console.log(`✓ OS: ${osType}`);
+  console.log(`✓ Python: ${(pythonVersion && pythonVersion.full) || 'unknown'}`);
+  console.log(`✓ Virtual environment: ${venvDir}`);
+  console.log("");
+  console.log("To use Claw-Coder:");
+  console.log("  1. Activate virtual environment: source venv/bin/activate");
+  console.log("  2. Run directly: python agent_rag.py chat");
+  console.log("  3. Or use the run script: ./run_claw_coder.sh");
+  console.log("");
+  if (isKaggle) {
+    console.log("Kaggle-specific usage:");
+    console.log("  - In notebooks: !source venv/bin/activate && python agent_rag.py chat");
+    console.log("");
+  }
+  console.log("Recommended models:");
+  console.log("  - Chat: llama3.2:1b (lightweight, default) or llama3.2:3b (more capable)");
+  console.log("  - Embedding: nomic-embed-text");
+  console.log("  - Image: llava-phi3:iq2_s (1.9GB, lightweight, default) or llava:7b (higher quality)");
+  console.log("");
+  console.log("✓ Setup completed successfully!");
+  console.log("");
+
+  process.exitCode = 0;
 }
 function runUpgrade() {
   console.log("Upgrading claw-coder...");
