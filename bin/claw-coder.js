@@ -256,7 +256,7 @@ function findPython() {
   return null;
 }
 
-const crypto = require("node:crypto");
+const crypto = require("crypto");
 
 function getDeviceId() {
   const idFile = path.join(os.homedir(), ".claw-coder", "device_id");
@@ -288,7 +288,7 @@ function askTelemetryConsent() {
   console.log("CLI version, platform. No code, no file contents, no personal info.");
   console.log("This helps us know what people actually use and improve that.\n");
 
-  const readline = require("node:readline");
+  const readline = require("readline");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     rl.question("Enable anonymous usage telemetry? [y/N] ", (answer) => {
@@ -1502,7 +1502,7 @@ async function main() {
         console.log(`  ${key.padEnd(8)} ${info.label.padEnd(16)} ${info.price.padEnd(12)} ${info.desc}`);
       }
       console.log("");
-      const readline = require("node:readline");
+      const readline = require("readline");
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       plan = await new Promise((resolve) => {
         rl.question("Which plan? (plus/pro/max): ", (answer) => {
@@ -1547,9 +1547,9 @@ async function main() {
 
 
   if (command === "clear-storage") {
-    const fs = require("node:fs");
-    const os = require("node:os");
-    const path = require("node:path");
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
     
     const sessionDir = path.join(os.homedir(), ".claw-coder");
     const sessionFile = path.join(sessionDir, "session.json");
