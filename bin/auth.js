@@ -5,6 +5,18 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
+// Polyfill fetch for Node.js < 18
+if (!global.fetch) {
+  try {
+    const nodeFetch = require("node-fetch");
+    global.fetch = nodeFetch;
+  } catch (e) {
+    console.error("Error: Node.js version too old. fetch API requires Node.js 18+.");
+    console.error("Please upgrade Node.js or install node-fetch: npm install node-fetch");
+    process.exit(1);
+  }
+}
+
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
 // Increment this whenever a release must re-authenticate every installed CLI.

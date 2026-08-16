@@ -10,6 +10,9 @@
     "doctor": "node ./bin/claw-coder.js doctor",
     "help": "node ./bin/claw-coder.js --help"
   },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
   "keywords": [
     "rag",
     "knowledge-graph",

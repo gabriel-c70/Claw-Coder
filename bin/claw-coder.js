@@ -824,6 +824,17 @@ function runSetup() {
   }
   console.log("✓ Python dependencies installed");
 
+  // Install Node.js dependencies (for older Node.js versions)
+  console.log("\nStep 5.5: Installing Node.js dependencies...");
+  if (fs.existsSync(path.join(packageRoot, "package.json"))) {
+    const npmInstall = run("npm", ["install"], { cwd: packageRoot, stdio: "pipe" });
+    if (npmInstall.status === 0) {
+      console.log("✓ Node.js dependencies installed");
+    } else {
+      console.warn("  Warning: Could not install Node.js dependencies (may not be critical)");
+    }
+  }
+
   // Install environment-specific dependencies
   console.log("\nStep 6: Installing environment-specific dependencies...");
   if (isKaggle) {
