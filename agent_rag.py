@@ -3864,10 +3864,14 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             # Only render if streaming didn't happen (fallback case)
             if not streaming_happened and response:
                 last_response = response
-                if any(keyword in response.lower() for keyword in ("ollama service", "connection error", "connection refused", "terminated")):
+                if any(keyword in response.lower() for keyword in
+                       ("ollama service", "connection error", "connection refused", "terminated")):
                     print_recovery_guidance(response)
                 else:
                     print_assistant_response(response)
+            elif streaming_happened:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
     except KeyboardInterrupt:
         pass
     finally:
