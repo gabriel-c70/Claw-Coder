@@ -1223,9 +1223,9 @@ class ToolStatusDisplay:
         
     def __enter__(self) -> "ToolStatusDisplay":
         return self
-        
+
     def __exit__(self, *args: object) -> None:
-        if self._status:
+        if self._status is not None and not self._paused:
             self._status.__exit__(*args)
             self._status = None
         # Ensure chat spinner is resumed

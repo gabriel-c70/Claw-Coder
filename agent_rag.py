@@ -3570,7 +3570,7 @@ def preview_code_chunks(path: str, language: Optional[str] = None) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Claw-coder is a local first AI agent that turns small local models into powerful coding companions")
-    parser.add_argument("--model", default=DEFAULT_CHAT_MODEL)
+    parser.add_argument("--model", default=None)
     parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
     parser.add_argument("--image-model", default=DEFAULT_IMAGE_MODEL, help="Vision model for HTML/CSS Docker screenshot analysis")
     parser.add_argument("--db-path", default=DEFAULT_DB_PATH)
@@ -3849,6 +3849,8 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 # syntax highlighted with its language badge. File-edit previews
                 # still render live when the agent calls a write tool.
                 nonlocal streaming_happened
+                if not streaming_happened and content:
+                    chat_spinner.pause()
                 full_streamed_content.append(content)
                 # Stream content to console in real-time
                 if content:
