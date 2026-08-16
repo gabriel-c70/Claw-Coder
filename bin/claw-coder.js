@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 "use strict";
 
-const { spawnSync, spawn } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
-const os = require("node:os");
+const { spawnSync, spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 const { login, loadSession, clearSession, hasCompletedNewVersionLogin } = require("./auth");
 // qwen3-embedding:4b is a large model for the smallest Codespaces machines.
 // A compact embedding model leaves enough memory for the chat model as well.
