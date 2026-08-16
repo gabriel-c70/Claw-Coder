@@ -3868,19 +3868,64 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             # Streaming callback function
             full_streamed_content = []
             streaming_happened = False
+            # alongside full_streamed_content / streaming_happened, before the loop:
+            stream_state = {"buffer": "", "in_code": False, "code_lang": "", "code_text": ""}
+
             def stream_callback(content):
-                # Keep the response until completion so fenced code can be
-                # syntax highlighted with its language badge. File-edit previews
-                # still render live when the agent calls a write tool.
                 nonlocal streaming_happened
                 if not streaming_happened and content:
                     chat_spinner.pause()
                 full_streamed_content.append(content)
-                # Stream content to console in real-time
-                if content:
-                    streaming_happened = True
-                    sys.stdout.write(content)
-                    sys.stdout.flush()
+                if not content:
+                    return
+                streaming_happened = True
+
+                pending = stream_state["buffer"] + content
+                stream_state["buffer"] = ""
+
+                while pending:
+                    if not stream_state["in_code"]:
+                        fence_idx = pending.find("```")
+                        if fence_idx == -1:
+                            # plain text — stream it live, as before
+                            sys.stdout.write(pending)
+                            sys.stdout.flush()
+                            pending = ""
+                        else:
+                            sys.stdout.write(pending[:fence_idx])
+                            sys.stdout.flush()
+                            pending = pending[fence_idx:]
+                            newline_idx = pending.find("\n")
+                            if newline_idx == -1:
+                                # haven't seen the language tag's end yet — wait for more
+                                stream_state["buffer"] = pending
+                                return
+                            stream_state["code_lang"] = pending[3:newline_idx].strip()
+                            stream_state["in_code"] = True
+                            stream_state["code_text"] = ""
+                            pending = pending[newline_idx + 1:]
+                    else:
+                        close_idx = pending.find("```")
+                        if close_idx == -1:
+                            # still inside the code block — buffer, don't print yet
+                            stream_state["code_text"] += pending
+                            pending = ""
+                        else:
+                            stream_state["code_text"] += pending[:close_idx]
+                            if RICH_AVAILABLE:
+                                from rich.syntax import Syntax
+                                print()
+                                _console().print(Syntax(
+                                    stream_state["code_text"],
+                                    stream_state["code_lang"] or "text",
+                                    theme="monokai",
+                                    word_wrap=True,
+                                ))
+                            else:
+                                print(f"\n```{stream_state['code_lang']}\n{stream_state['code_text']}\n```")
+                            stream_state["in_code"] = False
+                            stream_state["code_text"] = ""
+                            pending = pending[close_idx + 3:]
             
             with chat_spinner:
                 response = agent.chat(user_input, tool_status_display=tool_display, stream_callback=stream_callback, chat_spinner=chat_spinner)
