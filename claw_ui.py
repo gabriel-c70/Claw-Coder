@@ -1115,6 +1115,7 @@ class ChatSpinner:
     def __init__(self, label: str = "Being Creative...") -> None:
         self.label = label
         self._status: Optional[Status] = None
+        self._paused = False
 
     def __enter__(self) -> "ChatSpinner":
         if RICH_AVAILABLE:
@@ -1130,23 +1131,47 @@ class ChatSpinner:
 
     def update(self, label: str) -> None:
         self.label = label
-        if self._status is not None:
+        if self._status is not None and not self._paused:
             self._status.update(f"[cyan]{label}[/cyan]")
+
+    def pause(self) -> None:
+        """Pause the spinner temporarily (e.g., when tool status is shown)."""
+        self._paused = True
+        if self._status is not None:
+            try:
+                self._status.__exit__(None, None, None)
+            except:
+                pass
+
+    def resume(self) -> None:
+        """Resume the spinner after being paused."""
+        self._paused = False
+        if self._status is not None:
+            try:
+                self._status.__enter__()
+            except:
+                pass
 
 
 class ToolStatusDisplay:
     """Display real-time tool execution status like Devin."""
     
-    def __init__(self) -> None:
+    def __init__(self, chat_spinner: Optional[ChatSpinner] = None) -> None:
         self._current_tool: Optional[str] = None
         self._status: Optional[Status] = None
         self._console = _console() if RICH_AVAILABLE else None
         self._started_at: Optional[float] = None
+        self._chat_spinner = chat_spinner
         
     def start_tool(self, tool_name: str, description: str = "", arguments: Optional[Dict[str, Any]] = None) -> None:
         """Start displaying status for a tool execution."""
         self._current_tool = tool_name
         self._started_at = time.perf_counter()
+        
+        # Pause the chat spinner to avoid conflicts
+        if self._chat_spinner:
+            self._chat_spinner.pause()
+        
         if arguments:
             render_edit_preview(tool_name, arguments)
         if self._console and RICH_AVAILABLE:
@@ -1192,6 +1217,10 @@ class ToolStatusDisplay:
         self._current_tool = None
         self._started_at = None
         
+        # Resume the chat spinner after tool completes
+        if self._chat_spinner:
+            self._chat_spinner.resume()
+        
     def __enter__(self) -> "ToolStatusDisplay":
         return self
         
@@ -1199,3 +1228,6 @@ class ToolStatusDisplay:
         if self._status:
             self._status.__exit__(*args)
             self._status = None
+        # Ensure chat spinner is resumed
+        if self._chat_spinner:
+            self._chat_spinner.resume()

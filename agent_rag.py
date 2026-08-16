@@ -3429,7 +3429,7 @@ class Agent:
                     continue
                 raise
 
-    def chat(self, user_input: str, tool_status_display: Optional[ToolStatusDisplay] = None, stream_callback=None) -> str:
+    def chat(self, user_input: str, tool_status_display: Optional[ToolStatusDisplay] = None, stream_callback=None, chat_spinner: Optional[ChatSpinner] = None) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []
         
@@ -3813,7 +3813,9 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
             ]
             
             # Use tool status display for better UX
-            tool_display = ToolStatusDisplay()
+            # Create chat spinner first
+            chat_spinner = ChatSpinner(random.choice(REASONING_WORDS))
+            tool_display = ToolStatusDisplay(chat_spinner=chat_spinner)
             
             # Streaming callback function
             full_streamed_content = []
@@ -3823,8 +3825,8 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                 # still render live when the agent calls a write tool.
                 full_streamed_content.append(content)
             
-            with ChatSpinner(random.choice(REASONING_WORDS)):
-                response = agent.chat(user_input, tool_status_display=tool_display, stream_callback=stream_callback)
+            with chat_spinner:
+                response = agent.chat(user_input, tool_status_display=tool_display, stream_callback=stream_callback, chat_spinner=chat_spinner)
             
             # Render the completed response once, including copy-friendly code blocks.
             if full_streamed_content:

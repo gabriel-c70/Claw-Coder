@@ -208,15 +208,15 @@ function findPython() {
         if (versionInfo.preference === 'preferred') {
           return candidate; // No warning for preferred versions
         } else if (versionInfo.preference === 'experimental') {
-          console.warn(`Note: Using Python ${version?.full || 'unknown'} (experimental support)`);
+          console.warn(`Note: Using Python ${(version && version.full) || 'unknown'} (experimental support)`);
           console.warn(`  Some features may not work perfectly. Consider using Python 3.11 or 3.12 for best compatibility.`);
         } else if (versionInfo.preference === 'acceptable') {
-          console.warn(`Note: Using Python ${version?.full || 'unknown'} (acceptable support)`);
+          console.warn(`Note: Using Python ${(version && version.full) || 'unknown'} (acceptable support)`);
           console.warn(`  Python 3.11 or 3.12 recommended for best performance.`);
         }
         return candidate;
       } else {
-        console.warn(`Warning: Claw-Coder venv uses Python ${version?.full || 'unknown'} (unsupported)`);
+        console.warn(`Warning: Claw-Coder venv uses Python ${(version && version.full) || 'unknown'} (unsupported)`);
         console.warn(`  Python 3.8+ required. Consider recreating the venv with a newer Python version.`);
         return candidate; // Still try to use it
       }
@@ -239,7 +239,7 @@ function findPython() {
       if (versionInfo.compatible) {
         const version = getPythonVersion(candidate);
         if (versionInfo.preference !== 'preferred') {
-          console.warn(`Note: Using system Python ${version?.full || 'unknown'} (${versionInfo.preference} support)`);
+          console.warn(`Note: Using system Python ${(version && version.full) || 'unknown'} (${versionInfo.preference} support)`);
         }
         return candidate;
       }
@@ -480,14 +480,14 @@ function ensureDependencies(python) {
   
   console.log(`Missing Python dependencies: ${missing.join(', ')}`);
   console.log("Installing missing dependencies automatically...");
-  console.log(`Using Python: ${python} (${pythonVersion?.full || 'unknown'})`);
+  console.log(`Using Python: ${python} (${(pythonVersion && pythonVersion.full) || 'unknown'})`);
   
   if (versionInfo.preference === 'experimental') {
-    console.warn(`Note: Python ${pythonVersion?.full} is experimental - some dependencies may have compatibility issues.`);
+    console.warn(`Note: Python ${(pythonVersion && pythonVersion.full)} is experimental - some dependencies may have compatibility issues.`);
   } else if (versionInfo.preference === 'acceptable') {
-    console.warn(`Note: Python ${pythonVersion?.full} has acceptable support - Python 3.11/3.12 recommended.`);
+    console.warn(`Note: Python ${(pythonVersion && pythonVersion.full)} has acceptable support - Python 3.11/3.12 recommended.`);
   } else if (!versionInfo.compatible) {
-    console.warn(`Warning: Python ${pythonVersion?.full} may not be compatible with all dependencies.`);
+    console.warn(`Warning: Python ${(pythonVersion && pythonVersion.full)} may not be compatible with all dependencies.`);
     console.warn(`  Python 3.8+ recommended. Attempting installation anyway...`);
   }
   
@@ -504,7 +504,7 @@ function ensureDependencies(python) {
     const errorOutput = (upgradePip.stderr || upgradePip.stdout || "").toLowerCase();
     if (errorOutput.includes("importerror") || errorOutput.includes("cannot import")) {
       console.error("Error: pip in this Python environment is broken or incompatible.");
-      console.error(`This is common with Python ${pythonVersion?.full || 'unknown'}.`);
+      console.error(`This is common with Python ${(pythonVersion && pythonVersion.full) || 'unknown'}.`);
       console.error("Solutions:");
       console.error("1. Use a different Python version (3.11 or 3.12 recommended):");
       console.error("   export CLAW_PYTHON=$(which python3.12)");
@@ -528,7 +528,7 @@ function ensureDependencies(python) {
     const errorOutput = (result.stderr || result.stdout || "").toLowerCase();
     if (errorOutput.includes("importerror") || errorOutput.includes("cannot import")) {
       console.error("Error: pip in this Python environment is broken or incompatible.");
-      console.error(`This is common with Python ${pythonVersion?.full || 'unknown'}.`);
+      console.error(`This is common with Python ${(pythonVersion && pythonVersion.full) || 'unknown'}.`);
       console.error("Solutions:");
       console.error("1. Use a different Python version (3.11 or 3.12 recommended):");
       console.error("   export CLAW_PYTHON=$(which python3.12)");
@@ -1329,7 +1329,7 @@ async function main() {
   if (!session) {
     console.log("Not logged in. Run: claw-coder login");
   } else {
-        console.log(`Logged in as: ${session.user?.email}`);
+        console.log(`Logged in as: ${(session.user && session.user.email)}`);
         const exp = new Date(session.expires_at * 1000).toLocaleString();
         console.log(`Session expires: ${exp}`);
     }
@@ -1671,8 +1671,8 @@ async function main() {
     return;
   }
   // inject user identity into env so python can read it if needed
-  process.env.CLAW_USER_EMAIL = session.user?.email || "";
-  process.env.CLAW_USER_ID    = session.user?.id    || "";
+  process.env.CLAW_USER_EMAIL = (session.user && session.user.email) || "";
+  process.env.CLAW_USER_ID    = (session.user && session.user.id)    || "";
 }
 // ──────────────────────────────────────────────────────────
   // Handle claw-coder command to launch chat UI
