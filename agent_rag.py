@@ -3453,6 +3453,28 @@ class Agent:
                     continue
                 raise
 
+    def _extract_fallback_tool_call(self, content: str) -> Optional[Dict[str, Any]]:
+        """
+        Smaller local models sometimes write a tool call as JSON text in their
+        response instead of using the API's native tool-calling field. This
+        catches that pattern so it still gets executed instead of just being
+        shown to the user as inert text.
+        """
+        if not content:
+            return None
+        matches = re.findall(
+            r'\{\s*"name"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}',
+            content,
+            re.DOTALL,
+        )
+        for name, args_str in matches:
+            try:
+                args = json.loads(args_str)
+                return {"function": {"name": name, "arguments": args}}
+            except json.JSONDecodeError:
+                continue
+        return None
+
     def chat(self, user_input: str, tool_status_display: Optional[ToolStatusDisplay] = None, stream_callback=None, chat_spinner: Optional[ChatSpinner] = None) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_events: List[Dict[str, Any]] = []
@@ -3496,7 +3518,9 @@ class Agent:
                             describe_tool_action(tool_name, tool_args),
                             tool_args,
                         )
-                    
+                        if tool_name == "ask_user":
+                            tool_status_display.pause()
+
                     result = self.execute_tool(tool_name, tool_args)
                     
                     try:

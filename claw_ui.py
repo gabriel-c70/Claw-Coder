@@ -1135,13 +1135,14 @@ class ChatSpinner:
             self._status.update(f"[cyan]{label}[/cyan]")
 
     def pause(self) -> None:
-        """Pause the spinner temporarily (e.g., when tool status is shown)."""
         self._paused = True
         if self._status is not None:
             try:
                 self._status.__exit__(None, None, None)
-            except:
+            except Exception:
                 pass
+            self._status = None  # ← add this — prevents a double-exit in complete_tool()
+
 
     def resume(self) -> None:
         """Resume the spinner after being paused."""
@@ -1155,13 +1156,31 @@ class ChatSpinner:
 
 class ToolStatusDisplay:
     """Display real-time tool execution status like Devin."""
-    
+
     def __init__(self, chat_spinner: Optional[ChatSpinner] = None) -> None:
         self._current_tool: Optional[str] = None
         self._status: Optional[Status] = None
         self._console = _console() if RICH_AVAILABLE else None
         self._started_at: Optional[float] = None
         self._chat_spinner = chat_spinner
+        self._paused = False  # ← missing, add this
+
+    def pause(self) -> None:
+        """Tear down this tool's own Live display before something needs real terminal input."""
+        self._paused = True
+        if self._status is not None:
+            try:
+                self._status.__exit__(None, None, None)
+            except Exception:
+                pass
+
+    def resume(self) -> None:
+        self._paused = False
+        if self._status is not None:
+            try:
+                self._status.__enter__()
+            except Exception:
+                pass
         
     def start_tool(self, tool_name: str, description: str = "", arguments: Optional[Dict[str, Any]] = None) -> None:
         """Start displaying status for a tool execution."""
