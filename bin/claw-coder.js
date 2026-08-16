@@ -770,7 +770,8 @@ function runSetup() {
 
   // Create virtual environment
   console.log("\nStep 3: Setting up virtual environment...");
-  const venvDir = path.join(packageRoot, "venv");
+  // Use current working directory for venv, not package root (for global npm installs)
+  const venvDir = path.join(process.cwd(), "venv");
   const usingBundledVenv = python.includes(`${path.sep}venv${path.sep}`)
     || python.includes(`${path.sep}.venv${path.sep}`);
 
@@ -795,19 +796,40 @@ function runSetup() {
     if (bootstrap && !fs.existsSync(venvDir)) {
       console.log("  Creating virtual environment...");
       try {
+        // Try creating venv without ensurepip (Python 3.12+ issue)
         const createVenv = run(
           bootstrap.command,
-          [...bootstrap.prefixArgs, "-m", "venv", venvDir],
-          { cwd: packageRoot },
+          [...bootstrap.prefixArgs, "-m", "venv", venvDir, "--without-pip"],
+          { cwd: process.cwd() },
         );
         if (createVenv.status !== 0) {
-          console.error("✗ Failed to create virtual environment");
-          console.error("  You may need to run: python3 -m venv venv");
-          process.exitCode = createVenv.status || 1;
-          return;
+          // Try without --without-pip if that fails
+          const createVenvWithPip = run(
+            bootstrap.command,
+            [...bootstrap.prefixArgs, "-m", "venv", venvDir],
+            { cwd: process.cwd() },
+          );
+          if (createVenvWithPip.status !== 0) {
+            console.error("✗ Failed to create virtual environment");
+            console.error("  You may need to run: python3 -m venv venv");
+            process.exitCode = createVenvWithPip.status || 1;
+            return;
+          }
         }
         python = venvPythonPath(venvDir);
         console.log("✓ Virtual environment created");
+        
+        // Install pip manually if needed
+        const pipCheck = run(python, ["-m", "pip", "--version"], { stdio: "pipe" });
+        if (pipCheck.status !== 0) {
+          console.log("  Installing pip manually...");
+          const pipInstall = run(python, ["-c", "import urllib.request; exec(urllib.request.urlopen('https://bootstrap.pypa.io/get-pip.py').read().decode())"], { stdio: "pipe", timeout: 60000 });
+          if (pipInstall.status === 0) {
+            console.log("✓ Pip installed successfully");
+          } else {
+            console.warn("  Warning: Could not install pip automatically");
+          }
+        }
       } catch (e) {
         console.error("✗ Failed to create virtual environment:", e.message);
         process.exitCode = 1;
