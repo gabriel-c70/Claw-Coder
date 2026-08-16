@@ -263,7 +263,17 @@ function getDeviceId() {
   try {
     return fs.readFileSync(idFile, "utf8").trim();
   } catch {
-    const id = crypto.randomUUID();
+    // Fallback for older Node.js versions that don't have crypto.randomUUID()
+    let id;
+    try {
+      id = crypto.randomUUID();
+    } catch (e) {
+      // Manual UUID generation for older Node.js
+      id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
     fs.mkdirSync(path.dirname(idFile), { recursive: true });
     fs.writeFileSync(idFile, id, "utf8");
     return id;
