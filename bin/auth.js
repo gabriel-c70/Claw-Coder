@@ -1,9 +1,9 @@
 "use strict";
 
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { execFileSync } = require("child_process");
 
 const SESSION_DIR = path.join(os.homedir(), ".claw-coder");
 const SESSION_FILE = path.join(SESSION_DIR, "session.json");
@@ -101,7 +101,7 @@ function getDeviceId() {
   try {
     return fs.readFileSync(idFile, "utf8").trim();
   } catch {
-    const id = require("node:crypto").randomUUID();
+    const id = require("crypto").randomUUID();
     fs.mkdirSync(path.dirname(idFile), { recursive: true });
     fs.writeFileSync(idFile, id, "utf8");
     return id;
@@ -271,8 +271,8 @@ async function login(provider = "github") {
     if (!Array.isArray(githubEmails)) {
       throw new Error("GitHub returned an invalid email response. Please try logging in again.");
     }
-    const primaryEmail = githubEmails.find(e => e.primary && e.verified)?.email
-      || githubEmails.find(e => e.verified)?.email;
+    const primaryEmail = (githubEmails.find(e => e.primary && e.verified) || {}).email
+      || (githubEmails.find(e => e.verified) || {}).email;
 
     if (!primaryEmail) {
       throw new Error("Could not get a verified email from GitHub. Verify an email address, then try again.");
@@ -300,20 +300,20 @@ async function login(provider = "github") {
 
     // Server currently returns supabase_user_id only; API auth verifies the
     // GitHub token directly. Prefer a real JWT if the server starts returning one.
-    const accessToken = supabaseData?.access_token || tokenData.access_token;
-    const expiresAt = supabaseData?.expires_at
+    const accessToken = (supabaseData && supabaseData.access_token) || tokenData.access_token;
+    const expiresAt = (supabaseData && supabaseData.expires_at)
       ? Math.floor(new Date(supabaseData.expires_at).getTime() / 1000)
       : Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
 
     const session = {
       access_token:  accessToken,
-      refresh_token: supabaseData?.refresh_token || null,
+      refresh_token: (supabaseData && supabaseData.refresh_token) || null,
       expires_at:    expiresAt,
       provider:      "github",
-      token_type:    supabaseData?.access_token ? "supabase" : "github",
+      token_type:    (supabaseData && supabaseData.access_token) ? "supabase" : "github",
       github_token:  tokenData.access_token,
       user: {
-        id:    supabaseData?.supabase_user_id || String(githubUser.id),
+        id:    (supabaseData && supabaseData.supabase_user_id) || String(githubUser.id),
         email: primaryEmail,
         user_metadata: {
           user_name:  githubUser.login,
