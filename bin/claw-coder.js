@@ -472,6 +472,19 @@ function checkPythonDependencies(python) {
 }
 
 function ensureDependencies(python) {
+  // First check if pip is broken in this Python environment
+  const pipCheck = run(python, ["-m", "pip", "--version"], { stdio: "pipe" });
+  if (pipCheck.status !== 0) {
+    console.error("Error: pip is missing or broken in this Python environment.");
+    console.error(`Python: ${python}`);
+    console.error("");
+    console.error("This environment cannot be used. Please run:");
+    console.error("  claw-coder setup");
+    console.error("");
+    console.error("This will recreate the virtual environment with a working pip.");
+    return false;
+  }
+
   const missing = checkPythonDependencies(python);
   
   if (missing === null) {
@@ -760,6 +773,22 @@ function runSetup() {
   const venvDir = path.join(packageRoot, "venv");
   const usingBundledVenv = python.includes(`${path.sep}venv${path.sep}`)
     || python.includes(`${path.sep}.venv${path.sep}`);
+
+  // Check if existing venv is broken (missing pip)
+  if (fs.existsSync(venvDir)) {
+    const venvPython = venvPythonPath(venvDir);
+    const pipCheck = run(venvPython, ["-m", "pip", "--version"], { stdio: "pipe" });
+    if (pipCheck.status !== 0) {
+      console.log("  Existing virtual environment is broken (missing pip)");
+      console.log("  Removing broken virtual environment...");
+      try {
+        fs.rmSync(venvDir, { recursive: true, force: true });
+        console.log("✓ Broken virtual environment removed");
+      } catch (e) {
+        console.warn("  Warning: Could not remove broken venv, will try to recreate");
+      }
+    }
+  }
 
   if (!usingBundledVenv && !process.env.CLAW_PYTHON) {
     const bootstrap = bootstrapPythonSpec();
