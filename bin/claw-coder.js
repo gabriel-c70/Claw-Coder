@@ -772,6 +772,7 @@ function runSetup() {
   console.log("\nStep 3: Setting up virtual environment...");
   // Use current working directory for venv, not package root (for global npm installs)
   const venvDir = path.join(process.cwd(), "venv");
+  const venvBackupDir = path.join(process.cwd(), "venv_backup");
   const usingBundledVenv = python.includes(`${path.sep}venv${path.sep}`)
     || python.includes(`${path.sep}.venv${path.sep}`);
 
@@ -783,10 +784,21 @@ function runSetup() {
       console.log("  Existing virtual environment is broken (missing pip)");
       console.log("  Removing broken virtual environment...");
       try {
+        // Try to remove with rm
         fs.rmSync(venvDir, { recursive: true, force: true });
         console.log("✓ Broken virtual environment removed");
       } catch (e) {
-        console.warn("  Warning: Could not remove broken venv, will try to recreate");
+        console.warn("  Warning: Could not remove broken venv directly");
+        // Try to rename instead (works around permission issues)
+        try {
+          if (fs.existsSync(venvBackupDir)) {
+            fs.rmSync(venvBackupDir, { recursive: true, force: true });
+          }
+          fs.renameSync(venvDir, venvBackupDir);
+          console.log("✓ Broken virtual environment moved to backup");
+        } catch (e2) {
+          console.warn("  Warning: Could not move broken venv, will try to recreate in place");
+        }
       }
     }
   }
@@ -846,6 +858,23 @@ function runSetup() {
   if (fs.existsSync(venvDir)) {
     python = venvPythonPath(venvDir);
     console.log("✓ Virtual environment activated");
+  }
+
+  // Verify pip is actually working after activation
+  const finalPipCheck = run(python, ["-m", "pip", "--version"], { stdio: "pipe" });
+  if (finalPipCheck.status !== 0) {
+    console.error("✗ Virtual environment is still broken (pip not working)");
+    console.error("");
+    console.error("Manual fix required:");
+    console.error("  1. Remove the broken venv: rm -rf venv");
+    console.error("  2. Run setup again: claw-coder setup");
+    console.error("");
+    console.error("Or create manually:");
+    console.error("  python3 -m venv venv --without-pip");
+    console.error("  source venv/bin/activate");
+    console.error("  curl https://bootstrap.pypa.io/get-pip.py | python");
+    process.exitCode = 1;
+    return;
   }
 
   // Upgrade pip in virtual environment
