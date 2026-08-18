@@ -89,7 +89,9 @@ from claw_ui import (
     validate_ollama_model,
     print_print_goodbye,
     RICH_AVAILABLE,
-    _console
+    _console,
+    set_current_model,
+    get_current_model,
 )
 
 try:
@@ -1549,11 +1551,13 @@ class Agent:
             if "Invalid model name" in pull_result or "Could not" in pull_result or "not connected" in pull_result:
                 return pull_result
             self.model = model
+            set_current_model(self.model)  # ← add this
             return f"Remote model set to {model}.\n{pull_result}"
         try:
             self.model = validate_ollama_model(model)
         except ValueError as exc:
             return str(exc)
+        set_current_model(self.model)  # ← and this
         return f"Local model set to {self.model}."
 
     def switch_image_model(self, model: str) -> str:
@@ -3667,8 +3671,9 @@ def ingest_session_documents(agent: Agent, paths: Iterable[str]) -> None:
 def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = None) -> None:
 
     # Original Rich-based UI implementation
-    set_terminal_title("Claw Coder")
-    # Cursor-style trust prompt on first open of this folder.
+    set_terminal_title("Claw-Coder")
+    set_current_model(agent.model)
+
     if not agent._skip_trust_prompt and not agent.workspace_trusted:
         agent.workspace_trusted = ensure_workspace_trust(agent.workspace_root, prompt=True)
     print_banner(

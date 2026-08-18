@@ -656,10 +656,20 @@ function runSetup() {
   console.log("=== Claw-Coder Advanced Universal Setup ===");
   console.log("Detecting environment and configuring dependencies...\n");
 
-  // Detect environment
-  const isKaggle = process.env.KAGGLE_KERNEL_INTEGRATIONS !== undefined || fs.existsSync("/kaggle");
-  const isCodespaces = process.env.GITHUB_CODESPACES === "true" || process.env.CODESPACES === "true";
-  const isWorkspace = fs.existsSync("/workspace");
+  // Detect environment - enhanced for universal support
+  const isKaggle = process.env.KAGGLE_KERNEL_INTEGRATIONS !== undefined || 
+                   process.env.KAGGLE_KERNEL_RUN_TYPE !== undefined ||
+                   fs.existsSync("/kaggle");
+  const isCodespaces = process.env.GITHUB_CODESPACES === "true" || 
+                       process.env.CODESPACES === "true" ||
+                       process.env.GITHUB_TOKEN !== undefined && process.env.VSCODE_REMOTE_CONTAINERS === "true";
+  const isWorkspace = fs.existsSync("/workspace") || 
+                      fs.existsSync("/workspaces") ||
+                      process.env.WORKSPACE !== undefined;
+  const isGoogleColab = process.env.COLAB_GPU !== undefined || 
+                        fs.existsSync("/content/drive");
+  const isReplit = process.env.REPL_ID !== undefined;
+  const isBinder = process.env.BINDER_MOUNT !== undefined;
   
   let environment = "local";
   if (isKaggle) {
@@ -668,6 +678,15 @@ function runSetup() {
   } else if (isCodespaces) {
     environment = "codespaces";
     console.log("✓ Detected GitHub Codespaces environment");
+  } else if (isGoogleColab) {
+    environment = "colab";
+    console.log("✓ Detected Google Colab environment");
+  } else if (isReplit) {
+    environment = "replit";
+    console.log("✓ Detected Replit environment");
+  } else if (isBinder) {
+    environment = "binder";
+    console.log("✓ Detected Binder environment");
   } else if (isWorkspace) {
     environment = "workspace";
     console.log("✓ Detected workspace environment");
@@ -933,71 +952,118 @@ function runSetup() {
     } else {
       console.warn("  Warning: Some Codespaces dependencies could not be installed (not critical)");
     }
-  }
-
-  // Download and setup Ollama
-  console.log("\nStep 7: Setting up Ollama...");
-  installOllama();
-
-  // Start Ollama with memory-aware configuration
-  console.log("\nStep 8: Starting Ollama service...");
-  
-  // Configure Ollama based on available memory
-  let ollamaConfig = {
-    OLLAMA_NUM_PARALLEL: "1",
-    OLLAMA_MAX_QUEUE: "4",
-    OLLAMA_LOAD_TIMEOUT: "20m",
-    OLLAMA_REQUEST_TIMEOUT: "20m"
-  };
-
-  if (osType === "linux") {
-    try {
-      const memCheck = run("free", ["-m"], { stdio: "pipe" });
-      if (memCheck.status === 0) {
-        const memMatch = (memCheck.stdout || "").match(/Mem:\s+(\d+)/);
-        if (memMatch) {
-          const availableMem = parseInt(memMatch[1]);
-          console.log(`  Available memory: ${availableMem}MB`);
-          
-          if (availableMem < 4096) {
-            ollamaConfig = {
-              OLLAMA_NUM_PARALLEL: "1",
-              OLLAMA_MAX_QUEUE: "2",
-              OLLAMA_LOAD_TIMEOUT: "30m",
-              OLLAMA_REQUEST_TIMEOUT: "30m"
-            };
-            console.log("  Configured for low-memory environment");
-          } else if (availableMem < 8192) {
-            ollamaConfig = {
-              OLLAMA_NUM_PARALLEL: "1",
-              OLLAMA_MAX_QUEUE: "4",
-              OLLAMA_LOAD_TIMEOUT: "20m",
-              OLLAMA_REQUEST_TIMEOUT: "20m"
-            };
-            console.log("  Configured for medium-memory environment");
-          } else {
-            ollamaConfig = {
-              OLLAMA_NUM_PARALLEL: "1",
-              OLLAMA_MAX_QUEUE: "8",
-              OLLAMA_LOAD_TIMEOUT: "10m",
-              OLLAMA_REQUEST_TIMEOUT: "10m"
-            };
-            console.log("  Configured for high-memory environment");
-          }
-        }
-      }
-    } catch (e) {
-      console.log("  Could not detect memory, using default configuration");
+  } else if (isGoogleColab) {
+    console.log("  Installing Google Colab-specific dependencies...");
+    const colabInstall = run(python, ["-m", "pip", "install", "jupyter", "ipywidgets", "matplotlib"], { stdio: "pipe" });
+    if (colabInstall.status === 0) {
+      console.log("✓ Google Colab-specific dependencies installed");
+    } else {
+      console.warn("  Warning: Some Colab dependencies could not be installed (not critical)");
+    }
+  } else if (isReplit) {
+    console.log("  Installing Replit-specific dependencies...");
+    const replitInstall = run(python, ["-m", "pip", "install", "jupyter"], { stdio: "pipe" });
+    if (replitInstall.status === 0) {
+      console.log("✓ Replit-specific dependencies installed");
+    } else {
+      console.warn("  Warning: Some Replit dependencies could not be installed (not critical)");
+    }
+  } else if (isBinder) {
+    console.log("  Installing Binder-specific dependencies...");
+    const binderInstall = run(python, ["-m", "pip", "install", "jupyterlab"], { stdio: "pipe" });
+    if (binderInstall.status === 0) {
+      console.log("✓ Binder-specific dependencies installed");
+    } else {
+      console.warn("  Warning: Some Binder dependencies could not be installed (not critical)");
     }
   }
 
-  // Set Ollama environment variables
-  Object.assign(process.env, ollamaConfig);
-  
-  startOllamaServe();
+  // Download and setup Ollama (skip for some cloud environments)
+  console.log("\nStep 7: Setting up Ollama...");
+  if (isKaggle || isGoogleColab) {
+    console.log("  Skipping Ollama installation for cloud environment (Kaggle/Colab)");
+    console.log("  Note: Cloud environments may not support local Ollama. Consider using remote Ollama or API-based models.");
+    console.log("  For these environments, you may need to configure remote model services.");
+  } else {
+    installOllama();
+  }
 
-  // Pull recommended models with fallbacks
+  // Start Ollama with memory-aware configuration (skip for cloud environments)
+  console.log("\nStep 8: Starting Ollama service...");
+  if (isKaggle || isGoogleColab) {
+    console.log("  Skipping Ollama service start for cloud environment (Kaggle/Colab)");
+    console.log("  Ollama service will need to be configured separately for these environments.");
+  } else {
+    // Configure Ollama based on environment and available memory
+    let ollamaConfig = {
+      OLLAMA_NUM_PARALLEL: "1",
+      OLLAMA_MAX_QUEUE: "4",
+      OLLAMA_LOAD_TIMEOUT: "20m",
+      OLLAMA_REQUEST_TIMEOUT: "20m"
+    };
+
+    // Adjust for cloud environments with known constraints
+    if (isCodespaces || isReplit || isBinder) {
+      console.log("  Configuring for cloud environment (Codespaces/Replit/Binder)");
+      ollamaConfig = {
+        OLLAMA_NUM_PARALLEL: "1",
+        OLLAMA_MAX_QUEUE: "4",
+        OLLAMA_LOAD_TIMEOUT: "25m",
+        OLLAMA_REQUEST_TIMEOUT: "25m"
+      };
+    } else if (osType === "linux") {
+      try {
+        const memCheck = run("free", ["-m"], { stdio: "pipe" });
+        if (memCheck.status === 0) {
+          const memMatch = (memCheck.stdout || "").match(/Mem:\s+(\d+)/);
+          if (memMatch) {
+            const availableMem = parseInt(memMatch[1]);
+            console.log(`  Available memory: ${availableMem}MB`);
+            
+            if (availableMem < 4096) {
+              ollamaConfig = {
+                OLLAMA_NUM_PARALLEL: "1",
+                OLLAMA_MAX_QUEUE: "2",
+                OLLAMA_LOAD_TIMEOUT: "30m",
+                OLLAMA_REQUEST_TIMEOUT: "30m"
+              };
+              console.log("  Configured for low-memory environment");
+            } else if (availableMem < 8192) {
+              ollamaConfig = {
+                OLLAMA_NUM_PARALLEL: "1",
+                OLLAMA_MAX_QUEUE: "4",
+                OLLAMA_LOAD_TIMEOUT: "20m",
+                OLLAMA_REQUEST_TIMEOUT: "20m"
+              };
+              console.log("  Configured for medium-memory environment");
+            } else {
+              ollamaConfig = {
+                OLLAMA_NUM_PARALLEL: "1",
+                OLLAMA_MAX_QUEUE: "8",
+                OLLAMA_LOAD_TIMEOUT: "10m",
+                OLLAMA_REQUEST_TIMEOUT: "10m"
+              };
+              console.log("  Configured for high-memory environment");
+            }
+          }
+        }
+      } catch (e) {
+        console.log("  Could not detect memory, using default configuration");
+      }
+    }
+
+    // Set Ollama environment variables
+    Object.assign(process.env, ollamaConfig);
+    
+    startOllamaServe();
+  }
+
+  // Pull recommended models with fallbacks (skip for cloud environments)
   console.log("\nStep 9: Pulling recommended models...");
+  if (isKaggle || isGoogleColab) {
+    console.log("  Skipping model pulling for cloud environment (Kaggle/Colab)");
+    console.log("  Models will need to be configured separately for these environments.");
+  } else {
   
   // Chat model with fallbacks
   console.log("  Pulling lightweight chat model...");
@@ -1053,20 +1119,30 @@ function runSetup() {
   if (!imagePulled) {
     console.warn("  Warning: Could not pull image model. Screenshot analysis may not work. You can manually run: ollama pull llava-phi3:iq2_s");
   }
+  }
 
   // Set up environment variables
   console.log("\nStep 10: Setting environment variables...");
   const envFile = path.join(packageRoot, ".env");
+  
+  // Get ollama config or use defaults for cloud environments
+  const finalOllamaConfig = typeof ollamaConfig !== 'undefined' ? ollamaConfig : {
+    OLLAMA_NUM_PARALLEL: "1",
+    OLLAMA_MAX_QUEUE: "2",
+    OLLAMA_LOAD_TIMEOUT: "30m",
+    OLLAMA_REQUEST_TIMEOUT: "30m"
+  };
+  
   const envContent = `# Claw-Coder Environment Configuration
 # Generated by claw-coder advanced universal setup
 
 # Ollama Configuration
 OLLAMA_HOST=127.0.0.1
-OLLAMA_NUM_PARALLEL=${ollamaConfig.OLLAMA_NUM_PARALLEL}
-OLLAMA_MAX_QUEUE=${ollamaConfig.OLLAMA_MAX_QUEUE}
+OLLAMA_NUM_PARALLEL=${finalOllamaConfig.OLLAMA_NUM_PARALLEL}
+OLLAMA_MAX_QUEUE=${finalOllamaConfig.OLLAMA_MAX_QUEUE}
 OLLAMA_KEEP_ALIVE=5m
-OLLAMA_LOAD_TIMEOUT=${ollamaConfig.OLLAMA_LOAD_TIMEOUT}
-OLLAMA_REQUEST_TIMEOUT=${ollamaConfig.OLLAMA_REQUEST_TIMEOUT}
+OLLAMA_LOAD_TIMEOUT=${finalOllamaConfig.OLLAMA_LOAD_TIMEOUT}
+OLLAMA_REQUEST_TIMEOUT=${finalOllamaConfig.OLLAMA_REQUEST_TIMEOUT}
 
 # Model Configuration
 CLAW_MODEL=llama3.2:1b
@@ -1080,35 +1156,51 @@ DISPLAY_MODE=detailed
   fs.writeFileSync(envFile, envContent);
   console.log("✓ Environment configuration saved to .env");
 
-  // Create run script
-  console.log("\nStep 11: Creating helper scripts...");
-  const runScript = `#!/bin/bash
-# Claw-Coder run script
-source venv/bin/activate
-python agent_rag.py chat "$@"
-`;
-  const runScriptPath = path.join(packageRoot, "run_claw_coder.sh");
-  fs.writeFileSync(runScriptPath, runScript);
-  fs.chmodSync(runScriptPath, 0o755);
-  console.log("✓ Helper scripts created");
-
   // Final summary
   console.log("\n=== Setup Complete ===");
   console.log(`✓ Environment: ${environment}`);
   console.log(`✓ OS: ${osType}`);
   console.log(`✓ Python: ${(pythonVersion && pythonVersion.full) || 'unknown'}`);
-  console.log(`✓ Virtual environment: ${venvDir}`);
   console.log("");
   console.log("To use Claw-Coder:");
-  console.log("  1. Activate virtual environment: source venv/bin/activate");
-  console.log("  2. Run directly: python agent_rag.py chat");
-  console.log("  3. Or use the run script: ./run_claw_coder.sh");
+  console.log("  - Run claw-coder login to login");
+  console.log("  - Run claw-coder to chat");
   console.log("");
+  
+  // Environment-specific tips
   if (isKaggle) {
-    console.log("Kaggle-specific usage:");
-    console.log("  - In notebooks: !source venv/bin/activate && python agent_rag.py chat");
+    console.log("Kaggle Tips:");
+    console.log("  - For notebook usage: Use !python -m pip install command");
+    console.log("  - Memory is limited - prefer smaller models like llama3.2:1b");
+    console.log("  - Ollama is not supported on Kaggle - configure remote model services");
+    console.log("");
+  } else if (isCodespaces) {
+    console.log("Codespaces Tips:");
+    console.log("  - Ollama runs in background - check with: ollama list");
+    console.log("  - Port forwarding may be needed for some features");
+    console.log("  - Use VS Code terminal for best experience");
+    console.log("");
+  } else if (isGoogleColab) {
+    console.log("Google Colab Tips:");
+    console.log("  - Use !pip install for Python packages");
+    console.log("  - GPU available: Check with !nvidia-smi");
+    console.log("  - Memory is limited - prefer smaller models");
+    console.log("  - Ollama is not supported on Colab - configure remote model services");
+    console.log("");
+  } else if (isReplit) {
+    console.log("Replit Tips:");
+    console.log("  - Use the Shell tab for terminal commands");
+    console.log("  - Replit has resource limits - monitor usage");
+    console.log("  - Ollama may not work fully - check documentation");
+    console.log("");
+  } else if (isBinder) {
+    console.log("Binder Tips:");
+    console.log("  - Binder instances have time limits");
+    console.log("  - Use Jupyter notebooks for interactive work");
+    console.log("  - Ollama may not work fully - check documentation");
     console.log("");
   }
+  
   console.log("Recommended models:");
   console.log("  - Chat: llama3.2:1b (lightweight, default) or llama3.2:3b (more capable)");
   console.log("  - Embedding: nomic-embed-text");

@@ -40,6 +40,7 @@ CLAW_CONFIG_DIR = Path.home() / ".claw-coder"
 TRUSTED_WORKSPACES_PATH = CLAW_CONFIG_DIR / "trusted_workspaces.json"
 _DISPLAY_MODE = "detailed"
 _INPUT_SESSION: Any = None
+_CURRENT_MODEL: str = ""
 
 
 def normalize_workspace_path(path: Optional[str | Path] = None) -> str:
@@ -163,6 +164,17 @@ def set_display_mode(mode: str) -> str:
 
 def get_display_mode() -> str:
     return _DISPLAY_MODE
+
+
+def set_current_model(model: str) -> None:
+    """Set the current model for display in the UI."""
+    global _CURRENT_MODEL
+    _CURRENT_MODEL = model
+
+
+def get_current_model() -> str:
+    """Get the current model for display in the UI."""
+    return _CURRENT_MODEL
 
 
 def _console() -> "Console":
@@ -888,11 +900,21 @@ def read_multiline_input() -> str:
             history_path.parent.mkdir(parents=True, exist_ok=True)
             _INPUT_SESSION = PromptSession(key_bindings=kb, history=FileHistory(str(history_path)))
         
+        # Build bottom toolbar with current model
+        current_model = get_current_model()
+        import shutil
+
+        current_model = get_current_model()
+        model_display = f"Model: {current_model}" if current_model else "Model: not set"
+        left_text = "Enter send · Alt+Enter newline · ↑/↓ history · /help commands"
+        term_width = shutil.get_terminal_size((80, 24)).columns
+        padding = max(1, term_width - len(left_text) - len(model_display) - 1)
+        bottom_toolbar_text = f"{left_text}{' ' * padding}{model_display}"
         result = _INPUT_SESSION.prompt(
             '❭ ',
             multiline=True,
             enable_suspend=True,
-            bottom_toolbar="Enter send · Alt+Enter newline · ↑/↓ history · /help commands",
+            bottom_toolbar=bottom_toolbar_text,
         )
         
         return result.strip()
