@@ -3914,13 +3914,23 @@ def run_interactive_chat(agent: Agent, document_paths: Optional[List[str]] = Non
                             stream_state["code_text"] += pending[:close_idx]
                             if RICH_AVAILABLE:
                                 from rich.syntax import Syntax
+                                from rich.panel import Panel
+                                from rich.text import Text
                                 print()
-                                _console().print(Syntax(
-                                    stream_state["code_text"],
-                                    stream_state["code_lang"] or "text",
-                                    theme="monokai",
-                                    word_wrap=True,
-                                ))
+                                _console().print(
+                                    Panel(
+                                        Syntax(
+                                            stream_state["code_text"],
+                                            stream_state["code_lang"] or "text",
+                                            theme="monokai",
+                                            line_numbers=True,
+                                            word_wrap=True,
+                                        ),
+                                        subtitle=Text(stream_state["code_lang"] or "text", style="bold cyan"),
+                                        subtitle_align="right",
+                                        border_style="bright_black",
+                                    )
+                                )
                             else:
                                 print(f"\n```{stream_state['code_lang']}\n{stream_state['code_text']}\n```")
                             stream_state["in_code"] = False
